@@ -69,6 +69,7 @@ export function App() {
           else setReadFailed(true)
         }
         if (e.type === 'openCraft') openCraft(e.item)
+        if (e.type === 'openTab') setTab(e.tab)
         if (e.type === 'limits') setLimits(e.data)
       }),
     []

@@ -336,6 +336,7 @@ export type OverlayEvent =
   | { type: 'limits'; data: Limits }
   | { type: 'craftData'; data: CraftDataStatus }
   | { type: 'openCraft'; item: ParsedItem }
+  | { type: 'openTab'; tab: 'craft' | 'market' | 'journal' | 'settings' }
 
 export interface Api {
   getSettings(): Promise<Settings>

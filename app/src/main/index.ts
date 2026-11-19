@@ -20,6 +20,7 @@ import { foregroundTitle, isGameTitle } from './poe1/focus'
 import { addFromPriceCheck, removeCustom } from './poe1/customprofiles'
 import { addJournal, listJournal, removeJournal, updateJournal } from './journal'
 import { checkNow, startWatcher, type WatcherDeps } from './watcher'
+import { appIcon, createTray } from './tray'
 
 let win: BrowserWindow | null = null
 let settings: Settings
@@ -104,7 +105,7 @@ function showPriceCheck() {
   pcVisible = true
   if (!pcWin || pcWin.isDestroyed()) {
     pcWin = new BrowserWindow({
-      x, y, width, height, minWidth: 340, minHeight: 300, frame: false, transparent: true, backgroundColor: '#00000000',
+      x, y, width, height, minWidth: 340, minHeight: 300, frame: false, transparent: true, backgroundColor: '#00000000', icon: appIcon(),
       resizable: true, skipTaskbar: true, alwaysOnTop: true, show: false,
       webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true }
     })
@@ -180,6 +181,7 @@ function createWindow() {
     minWidth: 380,
     minHeight: 320,
     frame: false,
+    icon: appIcon(),
     transparent: true,
     backgroundColor: '#00000000',
     resizable: true,
@@ -356,6 +358,18 @@ app.whenReady().then(() => {
   app.setAppUserModelId('local.exileforge.overlay')
   createWindow()
   watchFocus()
+  createTray({
+    settings: () => settings,
+    league: currentLeague,
+    limits,
+    craftData: craftStatus,
+    visible: () => !!win?.isVisible(),
+    toggle: toggleOverlay,
+    openSettings: () => {
+      showOverlay()
+      send({ type: 'openTab', tab: 'settings' })
+    }
+  })
   startWatcher(watcherDeps)
   registerHotkeys()
 })
