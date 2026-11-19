@@ -221,7 +221,8 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   // самый трудный мод — основной для негарантированных методов
   const hardest = [...explicit].sort((a, b) => share(a) - share(b))[0]
   const HORTI = T('Horticrafting Station в убежище', 'Hideout Horticrafting Station')
-  const HARVEST_SRC = T('Стоимость Harvest — по таблице poedb.tw/us/Horticrafting (дата таблицы на сайте не указана).', 'Harvest costs from poedb.tw/us/Horticrafting (table date not stated).')
+  const BEAST_SRC = T('Рецепт сверен с poewiki.net/wiki/Beastcrafting (версия 3.30).', 'Recipe checked against poewiki.net/wiki/Beastcrafting (3.30).')
+  const HARVEST_SRC =T('Стоимость Harvest — по таблице poedb.tw/us/Horticrafting (дата таблицы на сайте не указана).', 'Harvest costs from poedb.tw/us/Horticrafting (table date not stated).')
 
   // моды влияния: шанс среди всех модов этого влияния (влиянные Exalted и зверь добавляют мод любой стороны)
   const infShare = (r: Resolved) => {
@@ -348,6 +349,35 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
           steps: [{ kind: 'explicit', title: T(`${RESONATORS[best.fs.length - 1]} + ${label} до «${hardest.text}»`, `${RESONATORS[best.fs.length - 1]} + ${label} until "${hardest.text}"`),
             detail: [T(`Шанс за попытку ≈ ${pct(best.p)} (без фоссилий ≈ ${pct(pOn(hardest, 2))}).`, `≈ ${pct(best.p)} per try (without fossils ≈ ${pct(pOn(hardest, 2))}).`), extrasNote(hardest)].filter(Boolean).join(' '),
             currency: cs, station: INV, farm: farm('Fossil') }]
+        })
+      }
+    }
+
+    // Alteration + Imprint: поймать два мода на магическом, снять отпечаток (Craicic Croaker), Regal/Exalted на остальные;
+    // промах — восстановить отпечаток, а не катать Alteration заново
+    {
+      const second = explicit.filter((x) => x.mod!.gen !== hardest.mod!.gen).sort((a, b) => share(a) - share(b))[0]
+      const rest = explicit.filter((x) => x !== hardest && x !== second)
+      if (second && rest.length >= 1 && rest.length <= 2 && prices.has('Craicic Croaker')) {
+        const alts = 1 / (0.5 * share(hardest) * share(second))
+        const augs = alts * 0.5 * share(hardest)
+        const pRest = Math.min(1, rest.reduce((a, r) => a * share(r), 1) * (rest.length === 2 ? 2 : 1))
+        const attempts = 1 / pRest
+        const altPhase = [cost('Orb of Transmutation', 1), costA('Orb of Alteration', alts), costA('Orb of Augmentation', augs)]
+        const loop = [costA('Craicic Croaker', attempts), costA('Regal Orb', attempts), ...(rest.length === 2 ? [costA('Exalted Orb', attempts)] : [])]
+        primaries.push({
+          key: 'imprint', name: 'Alteration + Imprint', mechanics: ['Currency', 'Beastcraft'], main: hardest, chaos: sum(altPhase) + sum(loop), notes: [],
+          already: (r) => (r === hardest || r === second || rest.includes(r) ? 1 : pOn(r, 2)),
+          steps: [
+            { kind: 'explicit', title: T(`Магический предмет: Alteration/Augmentation до «${hardest.text}» + «${second.text}»`, `Magic item: Alteration/Augmentation until "${hardest.text}" + "${second.text}"`),
+              detail: T(`Шанс за попытку ≈ ${pct(0.5 * share(hardest) * share(second))}.`, `≈ ${pct(0.5 * share(hardest) * share(second))} per try.`),
+              currency: altPhase, station: INV, farm: farm('Orb of Alteration') },
+            { kind: 'explicit', title: T(`Бист-крафт «Create an Imprint of a Magic Item» (Craicic Croaker) → Regal${rest.length === 2 ? ' + Exalted' : ''} на ${names(rest)}`,
+              `Beastcraft "Create an Imprint of a Magic Item" (Craicic Croaker) → Regal${rest.length === 2 ? ' + Exalted' : ''} for ${names(rest)}`),
+              detail: T(`Шанс попасть ≈ ${pct(pRest)}. Промах — восстановить предмет из отпечатка и повторить (каждый раз нужен новый Craicic Croaker). ${BEAST_SRC}`,
+                `Hit chance ≈ ${pct(pRest)}. On a miss, restore the item from the imprint and retry (a new Craicic Croaker each time). ${BEAST_SRC}`),
+              currency: loop, station: T('Алтарь Menagerie', 'Menagerie altar'), farm: T('Звери — Einhar в картах или трейд', 'Beasts: Einhar in maps or trade') }
+          ]
         })
       }
     }
@@ -492,8 +522,8 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
             title: title(r.mod!.gen === 'prefix'
               ? T(`бист-крафт «Add a Prefix, Remove a Random Suffix» (${beast})`, `beastcraft "Add a Prefix, Remove a Random Suffix" (${beast})`)
               : T(`бист-крафт «Add a Suffix, Remove a Random Prefix» (${beast})`, `beastcraft "Add a Suffix, Remove a Random Prefix" (${beast})`)),
-            detail: T(`Только для редких. Шанс нужного мода ≈ ${pct(p)}; убирает случайный мод другой стороны — подходит, когда там нет нужных модов. Рецепт по таблице Bestiary на poedb (без даты).`,
-              `Rare items only. ≈ ${pct(p)} for the wanted mod; removes a random mod of the other side, so use it when that side has nothing you need. Recipe from the poedb Bestiary table (undated).`),
+            detail: T(`Только для редких. Шанс нужного мода ≈ ${pct(p)}; убирает случайный мод другой стороны — подходит, когда там нет нужных модов. Доступные моды определяет уровень зверя, а не ilvl предмета: нужен зверь уровня ${need}+. ${BEAST_SRC}`,
+              `Rare items only. ≈ ${pct(p)} for the wanted mod; removes a random mod of the other side, so use it when that side has nothing you need. The beast's level, not item level, decides which mods can roll: use a level ${need}+ beast. ${BEAST_SRC}`),
             currency: cs, station: T('Алтарь Menagerie', 'Menagerie altar'), farm: T('Звери — Einhar в картах или трейд', 'Beasts: Einhar in maps or trade') }] })
       }
     }
@@ -534,7 +564,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
         total += sum(cs)
         steps.push({ kind: 'explicit', optional: true,
           title: T(`Если «${r.text}» не выпал: бист-крафт «Add a Mod to a ${inf.name} Item» (${inf.beast} + Craicic Maw)`, `If "${r.text}" is missing: beastcraft "Add a Mod to a ${inf.name} Item" (${inf.beast} + Craicic Maw)`),
-          detail: T(`Шанс ≈ ${pct(p)}; промах — Orb of Annulment (может снять нужный мод). Рецепт по таблице Bestiary на poedb (без даты).`, `≈ ${pct(p)}; on a miss use Orb of Annulment (may remove a wanted mod). Recipe from the poedb Bestiary table (undated).`),
+          detail: T(`Шанс ≈ ${pct(p)}; промах — Orb of Annulment (может снять нужный мод). ${BEAST_SRC}`, `≈ ${pct(p)}; on a miss use Orb of Annulment (may remove a wanted mod). ${BEAST_SRC}`),
           currency: cs, station: T('Алтарь Menagerie', 'Menagerie altar'), farm: T('Звери — Einhar в картах или трейд', 'Beasts: Einhar in maps or trade') })
       }
     }
@@ -581,9 +611,18 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       currency: cur ? [cost(cur, 8, '×4–20')] : [], station: INV, farm: farm(cur ?? '') })
   }
   const links = item.props.sockets?.links ?? 0
-  if (links >= 5)
-    tail.push({ kind: 'finish', title: T(`Связать ${links} гнёзд`, `Link ${links} sockets`), currency: [cost('Orb of Fusing', links >= 6 ? 1500 : 150)],
-      station: BENCH, farm: farm('Orb of Fusing') })
+  if (links >= 5) {
+    // верстак (Orb of Fusing) или бист-крафт «Maximum Possible Links» — что дешевле
+    const fusing = [cost('Orb of Fusing', links >= 6 ? 1500 : 150)]
+    const morrigan = prices.has('The Black Mórrígan') ? 'The Black Mórrígan' : prices.has('The Black Mórrigan') ? 'The Black Mórrigan' : null
+    const beastCs = morrigan && prices.has('Craicic Sand Spitter') ? [cost('Craicic Sand Spitter', 1), cost(morrigan, 1)] : null
+    if (beastCs && sum(beastCs) < sum(fusing))
+      tail.push({ kind: 'finish', title: T(`Связать гнёзда: бист-крафт «Maximum Possible Links»`, `Link sockets: beastcraft "Maximum Possible Links"`),
+        detail: T(`Дешевле, чем ${links >= 6 ? 1500 : 150} Orb of Fusing на верстаке. ${BEAST_SRC}`, `Cheaper than ${links >= 6 ? 1500 : 150} Orbs of Fusing at the bench. ${BEAST_SRC}`),
+        currency: beastCs, station: T('Алтарь Menagerie', 'Menagerie altar'), farm: T('The Black Mórrígan — редко в картах T14+', 'The Black Mórrígan: rare in T14+ maps') })
+    else
+      tail.push({ kind: 'finish', title: T(`Связать ${links} гнёзд`, `Link ${links} sockets`), currency: fusing, station: BENCH, farm: farm('Orb of Fusing') })
+  }
   for (const r of resolved.filter((x) => x.source === 'corrupted')) {
     const cp = [...d.mods.values()].filter((x) => x.gen === 'corrupted' && weightFor(x, tags) > 0)
     const Wc = cp.reduce((a, x) => a + weightFor(x, tags), 0)
@@ -656,11 +695,11 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     assemble(pr.key.startsWith('ess-') ? 'essence' : pr.key, pr.name, [...mech], body, weighted, notes)
   }
   out.sort((a, b) => a.costMax - b.costMax)
-  // по одному варианту на каждый основной метод (лучшая эссенция из всех), не больше шести
+  // по одному варианту на каждый основной метод (лучшая эссенция из всех), не больше восьми
   const seen = new Set<string>()
   const variantsOut: CraftVariant[] = out
     .filter((v) => (seen.has(v.key) ? false : (seen.add(v.key), true)))
-    .slice(0, 6)
+    .slice(0, 8)
     .map(({ key: _k, ...v }) => v)
 
   if (missingPrice.size) warnings.push(T(`Нет цены на poe.ninja: ${[...missingPrice].join(', ')} — итог по ним занижен.`, `No poe.ninja price for: ${[...missingPrice].join(', ')}; totals are understated.`))
