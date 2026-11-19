@@ -29,6 +29,8 @@ export interface Settings {
   scanInterval: ScanInterval
   outlier: OutlierMode
   maxAgeDays: 3 | 7 | 14
+  /** нижняя граница цены на вкладке «Рынок» */
+  marketMin: { value: number; currency: 'chaos' | 'divine' }
   window: { x?: number; y?: number; width?: number; height?: number }
 }
 
@@ -61,6 +63,32 @@ export interface I18nText {
   en: string
 }
 
+export interface ExampleMod {
+  text: string
+  /** тир с трейда: P1 — лучший префикс, S1 — лучший суффикс, R — крафт */
+  tier?: string
+  kind: 'implicit' | 'explicit' | 'crafted' | 'fractured' | 'enchant'
+}
+
+/** Реальный лот с трейда — чтобы увидеть фактические моды. */
+export interface ExampleItem {
+  name: string
+  baseType: string
+  ilvl: number | null
+  rarity: string
+  corrupted: boolean
+  price: string
+  priceDiv: number
+  mods: ExampleMod[]
+}
+
+export interface MarketQuery {
+  slot: SlotId
+  subtype: string
+  minValue: number
+  minCurrency: 'chaos' | 'divine'
+}
+
 export interface ProfileResult {
   id: string
   name: I18nText
@@ -85,11 +113,19 @@ export interface ProfileResult {
   tradeUrl?: string
   /** Chaos за 1 Divine в момент запроса */
   divine?: number
+  /** 3–5 свежих лотов в пределах рыночной цены */
+  examples?: ExampleItem[]
   error?: string
 }
 
 export interface SlotMarket {
   slot: SlotId
+  subtype: string
+  /** нижняя граница цены, с которой сканировали, в Chaos */
+  minChaos: number
+  /** есть ли ещё не отсканированные профили для этого слота и типа */
+  hasMore: boolean
+  totalProfiles: number
   league: string
   scannedAt: number | null
   scanning: boolean
@@ -109,6 +145,8 @@ export interface ParsedItem {
   slot: SlotId | null
   implicits: string[]
   mods: string[]
+  /** тиры модов (если предмет взят с трейда), по индексам mods */
+  modTiers?: (string | undefined)[]
   corrupted: boolean
 }
 
@@ -142,9 +180,12 @@ export interface Api {
   setSession(value: string): Promise<{ ok: boolean; error?: 'format' | 'encryption' }>
   clearSession(): Promise<void>
   suspendHotkeys(suspend: boolean): Promise<void>
-  /** вернуть кэш слота; если он устарел и автообновление включено — запустить сканирование */
-  getMarket(slot: SlotId): Promise<SlotMarket>
-  scanMarket(slot: SlotId): Promise<void>
+  /** только кэш — трейд не трогает, чтобы не тратить лимиты */
+  getMarket(q: MarketQuery): Promise<SlotMarket>
+  /** сканировать первые профили или, с more = true, догрузить следующие */
+  scanMarket(q: MarketQuery, more: boolean): Promise<void>
+  /** курс Divine в Chaos для текущей лиги (poe.ninja, лимиты трейда не тратит) */
+  getDivine(): Promise<number | null>
   getLimits(): Promise<Limits>
   hide(): void
   onEvent(cb: (e: OverlayEvent) => void): () => void

@@ -2,11 +2,12 @@ import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from 'elec
 import { join } from 'path'
 import { loadSettings, writeSettings, hasSession, setSession, clearSession } from './settings'
 import { fetchLeagues } from './leagues'
-import { HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type OverlayEvent, type Settings, type SlotId } from '../shared/types'
+import { HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type MarketQuery, type OverlayEvent, type Settings } from '../shared/types'
 import { parseItem } from '../shared/poe1/item'
 import { copyItemText } from './poe1/copy'
 import { priceCheck } from './poe1/pricecheck'
-import { getSlot, isStale, scanSlot } from './poe1/market'
+import { getCached, scan } from './poe1/market'
+import { getRates } from './poe1/ninja'
 import { limits } from './poe1/trade'
 
 let win: BrowserWindow | null = null
@@ -155,20 +156,28 @@ ipcMain.handle('hotkeys:suspend', (_e, suspend: boolean) => {
 })
 ipcMain.on('overlay:hide', () => win?.hide())
 
-function startScan(league: string, slot: SlotId) {
+// Рынок: трейд опрашивается только по явной команде пользователя («Найти» / «Загрузить ещё»)
+ipcMain.handle('market:get', async (_e, q: MarketQuery) => getCached(await currentLeague(), q))
+ipcMain.handle('market:scan', async (_e, q: MarketQuery, more: boolean) => {
+  const league = await currentLeague()
   const timer = setInterval(sendLimits, 1000)
-  scanSlot(league, slot, settings, (data) => send({ type: 'market', data })).finally(() => {
+  try {
+    await scan(league, q, more, settings, (data) => send({ type: 'market', data }))
+  } catch (e) {
+    const cached = await getCached(league, q)
+    send({ type: 'market', data: { ...cached, scanning: false, error: e instanceof Error ? e.message : String(e) } })
+  } finally {
     clearInterval(timer)
     sendLimits()
-  })
-}
-ipcMain.handle('market:get', async (_e, slot: SlotId) => {
-  const league = await currentLeague()
-  const m = getSlot(league, slot)
-  if (isStale(m, settings)) startScan(league, slot)
-  return m
+  }
 })
-ipcMain.handle('market:scan', async (_e, slot: SlotId) => startScan(await currentLeague(), slot))
+ipcMain.handle('rates:divine', async () => {
+  try {
+    return (await getRates(await currentLeague())).divine
+  } catch {
+    return null
+  }
+})
 ipcMain.handle('limits:get', () => limits())
 
 app.on('second-instance', showOverlay)

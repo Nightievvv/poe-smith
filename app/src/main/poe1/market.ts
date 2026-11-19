@@ -1,15 +1,19 @@
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { ProfileResult, Settings, SlotId, SlotMarket } from '../../shared/types'
+import type { ExampleItem, ExampleMod, MarketQuery, ProfileResult, Settings, SlotMarket } from '../../shared/types'
 import { analyze, type PricePoint } from '../../shared/analyze'
-import { profilesFor } from './profiles'
+import { SLOT_CATEGORY, subtypeOf } from '../../shared/poe1/catalog'
+import { profilesFor, type Profile } from './profiles'
 import { buildQuery, type QuerySpec } from './query'
-import { search, fetchListings, tradeUrl, type Listing } from './trade'
+import { search, fetchListings, tradeUrl, type Listing, type RawMod } from './trade'
 import { getRates, type Rates } from './ninja'
 
 /** Сколько свежих лотов выгружаем на профиль: 2 запроса fetch. Больше лимиты трейда не позволяют. */
 const SAMPLE = 20
+/** Сколько профилей сканируем за одно нажатие «Найти» / «Загрузить ещё». */
+const BATCH = 5
+const EXAMPLES = 5
 
 interface Store {
   slots: Record<string, SlotMarket>
@@ -25,24 +29,61 @@ try {
   /* повреждённый кэш — начинаем заново */
 }
 const persist = () => writeFileSync(file(), JSON.stringify(store), 'utf-8')
-const key = (league: string, slot: SlotId) => `${league}|${slot}`
 
-function toPoints(listings: Listing[], rates: Rates): PricePoint[] {
-  const pts: PricePoint[] = []
+export function minChaosOf(q: MarketQuery, rates: Rates | null): number {
+  if (!q.minValue || q.minValue <= 0) return 0
+  if (q.minCurrency === 'chaos') return Math.round(q.minValue)
+  return rates ? Math.round(q.minValue * rates.divine) : 0
+}
+const key = (league: string, q: MarketQuery, minChaos: number) => `${league}|${q.slot}|${q.subtype}|${minChaos}`
+
+function toPoints(listings: Listing[], rates: Rates): (PricePoint & { l: Listing })[] {
+  const pts: (PricePoint & { l: Listing })[] = []
   for (const l of listings) {
     const pr = l.listing.price
     if (!pr) continue
     const chaos = rates.chaosPer[pr.currency]
-    if (!chaos) continue // валюта без курса (редкие обменники) — пропускаем
-    pts.push({ div: (pr.amount * chaos) / rates.divine, account: l.listing.account.name, indexed: l.listing.indexed })
+    if (!chaos) continue // валюта без курса — пропускаем
+    pts.push({ div: (pr.amount * chaos) / rates.divine, account: l.listing.account.name, indexed: l.listing.indexed, l })
   }
   return pts
+}
+
+/** Трейд размечает ключевые слова: "[PlayerItemRarity|Item Rarity]" → "Item Rarity", "[Onslaught]" → "Onslaught". */
+const clean = (s: string) => s.replace(/\[([^\]|]+)\|([^\]]+)\]/g, '$2').replace(/\[([^\]]+)\]/g, '$1')
+
+function mods(list: RawMod[] | undefined, kind: ExampleMod['kind']): ExampleMod[] {
+  return (list ?? []).map((m) => {
+    if (typeof m === 'string') return { text: clean(m), kind }
+    const k: ExampleMod['kind'] = m.flags?.crafted || m.domain === 'crafted' ? 'crafted' : m.flags?.fractured ? 'fractured' : kind
+    return { text: clean(m.description), tier: m.mods?.[0]?.tier, kind: k }
+  })
+}
+
+function toExample(p: PricePoint & { l: Listing }): ExampleItem {
+  const it = p.l.item
+  const pr = p.l.listing.price!
+  return {
+    name: it.name || it.typeLine,
+    baseType: it.baseType,
+    ilvl: it.ilvl ?? null,
+    rarity: it.rarity ?? 'Rare',
+    corrupted: !!it.corrupted,
+    price: `${pr.amount} ${pr.currency}`,
+    priceDiv: p.div,
+    mods: [
+      ...mods(it.enchantMods, 'enchant'),
+      ...mods(it.implicitMods, 'implicit'),
+      ...mods(it.fracturedMods, 'fractured'),
+      ...mods(it.explicitMods, 'explicit'),
+      ...mods(it.craftedMods, 'crafted')
+    ]
+  }
 }
 
 function trendFor(hist: { t: number; m: number }[] | undefined, median: number): number | null {
   if (!hist?.length || !median) return null
   const weekAgo = Date.now() - 7 * 24 * 3600 * 1000
-  // самая свежая точка, которой не меньше ~6 дней
   const old = [...hist].reverse().find((h) => h.t <= weekAgo + 24 * 3600 * 1000)
   if (!old || !old.m) return null
   return Math.round(((median - old.m) / old.m) * 100)
@@ -53,49 +94,80 @@ export async function runQuery(league: string, spec: QuerySpec, settings: Settin
   const rates = await getRates(league)
   const s = await search(league, buildQuery(spec, settings.maxAgeDays))
   const listings = s.result.length ? await fetchListings(s.result.slice(0, SAMPLE), s.id) : []
-  const stats = analyze(toPoints(listings, rates), settings.outlier)
+  const pts = toPoints(listings, rates)
+  const stats = analyze(pts, settings.outlier)
+  // примеры: свежие лоты разных продавцов в пределах рыночной цены
+  const seen = new Set<string>()
+  const examples: ExampleItem[] = []
+  for (const p of pts) {
+    if (examples.length >= EXAMPLES || seen.has(p.account) || p.div < stats.lo || p.div > stats.hi) continue
+    seen.add(p.account)
+    examples.push(toExample(p))
+  }
   const { values, lo, hi, median, q1, q3, kept, cut, sellers, fresh } = stats
+  return { total: s.total, tradeUrl: tradeUrl(league, s.id), values, lo, hi, median, q1, q3, kept, cut, sellers, fresh, divine: rates.divine, examples }
+}
+
+function specFor(p: Profile, q: MarketQuery, minChaos: number): QuerySpec {
+  const st = subtypeOf(q.slot, q.subtype)
+  const defence = { ...(st.defence ?? {}) }
+  for (const [k, v] of Object.entries(p.defence ?? {}) as ['ar' | 'ev' | 'es', number][]) defence[k] = { ...(defence[k] ?? {}), min: v }
   return {
-    total: s.total,
-    tradeUrl: tradeUrl(league, s.id),
-    values, lo, hi, median, q1, q3, kept, cut, sellers, fresh,
-    divine: rates.divine
+    category: st.category ?? SLOT_CATEGORY[q.slot],
+    rarity: p.rarity ?? 'rare',
+    type: p.type ?? st.type,
+    stats: p.stats,
+    pdps: p.pdps,
+    edps: p.edps,
+    crit: p.crit,
+    ilvl: p.ilvl,
+    quality: p.quality,
+    defence,
+    minChaos
   }
 }
 
-export function getSlot(league: string, slot: SlotId): SlotMarket {
-  return store.slots[key(league, slot)] ?? { slot, league, scannedAt: null, scanning: false, profiles: [] }
-}
-
-export function isStale(m: SlotMarket, settings: Settings) {
-  if (!m.scannedAt) return true
-  if (settings.scanInterval === 'manual') return false
-  const ttl = settings.scanInterval === '1h' ? 3600e3 : 1800e3
-  return Date.now() - m.scannedAt > ttl
+/** Только кэш: без запросов к трейду. */
+export async function getCached(league: string, q: MarketQuery): Promise<SlotMarket> {
+  const rates = await getRates(league).catch(() => null)
+  const minChaos = minChaosOf(q, rates)
+  const all = profilesFor(q.slot, q.subtype)
+  return (
+    store.slots[key(league, q, minChaos)] ?? {
+      slot: q.slot, subtype: q.subtype, minChaos, hasMore: all.length > 0, totalProfiles: all.length,
+      league, scannedAt: null, scanning: false, profiles: [], divine: rates?.divine
+    }
+  )
 }
 
 const running = new Set<string>()
 
-export async function scanSlot(league: string, slot: SlotId, settings: Settings, emit: (m: SlotMarket) => void) {
-  const k = key(league, slot)
+export async function scan(league: string, q: MarketQuery, more: boolean, settings: Settings, emit: (m: SlotMarket) => void) {
+  const rates = await getRates(league)
+  const minChaos = minChaosOf(q, rates)
+  const k = key(league, q, minChaos)
   if (running.has(k)) return
   running.add(k)
-  const profiles = profilesFor(slot)
-  const prev = getSlot(league, slot)
-  let cur: SlotMarket = { ...prev, scanning: true, progress: { done: 0, total: profiles.length }, error: undefined }
+  const all = profilesFor(q.slot, q.subtype)
+  const prev = more ? (store.slots[k]?.profiles ?? []) : []
+  const todo = all.filter((p) => !prev.some((r) => r.id === p.id)).slice(0, BATCH)
+  let cur: SlotMarket = {
+    slot: q.slot, subtype: q.subtype, minChaos, league, totalProfiles: all.length, divine: rates.divine,
+    hasMore: true, scanning: true, scannedAt: store.slots[k]?.scannedAt ?? null, profiles: prev,
+    progress: { done: 0, total: todo.length }
+  }
   emit(cur)
-  const results: ProfileResult[] = []
+  const results = [...prev]
   try {
-    for (const p of profiles) {
+    for (const p of todo) {
       let r: ProfileResult
       try {
-        const q = await runQuery(league, p, settings)
-        const hk = `${league}|${p.id}`
+        const res = await runQuery(league, specFor(p, q, minChaos), settings)
+        const hk = `${league}|${p.id}|${minChaos}`
         const hist = (store.history[hk] ??= [])
-        r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, ...q, trend: trendFor(hist, q.median) }
-        if (q.median) hist.push({ t: Date.now(), m: q.median })
+        r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, ...res, trend: trendFor(hist, res.median) }
+        if (res.median) hist.push({ t: Date.now(), m: res.median })
         store.history[hk] = hist.slice(-200)
-        cur = { ...cur, divine: q.divine }
       } catch (e) {
         r = {
           id: p.id, name: p.name, recipe: p.recipe, total: 0, sellers: 0, values: [], lo: 0, hi: 0, median: 0, q1: 0, q3: 0,
@@ -103,18 +175,16 @@ export async function scanSlot(league: string, slot: SlotId, settings: Settings,
         }
       }
       results.push(r)
-      // пока сканируем, показываем новые результаты вместе со старыми
-      const merged = profiles.map((pp) => results.find((x) => x.id === pp.id) ?? prev.profiles.find((x) => x.id === pp.id)).filter(Boolean) as ProfileResult[]
-      cur = { ...cur, profiles: merged, progress: { done: results.length, total: profiles.length } }
+      cur = { ...cur, profiles: [...results], progress: { done: results.length - prev.length, total: todo.length } }
       emit(cur)
     }
-    cur = { ...cur, scanning: false, progress: undefined, scannedAt: Date.now(), profiles: results }
+    cur = { ...cur, scanning: false, progress: undefined, scannedAt: Date.now(), hasMore: results.length < all.length }
   } catch (e) {
     cur = { ...cur, scanning: false, progress: undefined, error: e instanceof Error ? e.message : String(e) }
   } finally {
     running.delete(k)
   }
-  store.slots[k] = { ...cur, scanning: false }
+  store.slots[k] = cur
   persist()
   emit(cur)
 }

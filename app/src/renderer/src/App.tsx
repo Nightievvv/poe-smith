@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { HotkeyId, Limits, ParsedItem, PriceCheck, Settings, SlotId, SlotMarket } from '../../shared/types'
+import type { ExampleItem, HotkeyId, Limits, MarketQuery, ParsedItem, PriceCheck, Settings, SlotId, SlotMarket } from '../../shared/types'
+import { SUBTYPES } from '../../shared/poe1/catalog'
 import { makeT } from './i18n'
 import { matches } from './hotkeys'
 import { SettingsTab } from './SettingsTab'
@@ -15,19 +16,36 @@ export function App() {
   const [tab, setTab] = useState<Tab>('craft')
   const [failed, setFailed] = useState<HotkeyId[]>([])
   const [craftSlot, setCraftSlot] = useState<SlotId>('body')
-  const [marketSlot, setMarketSlot] = useState<SlotId>('body')
+  const [query, setQueryState] = useState<MarketQuery>({ slot: 'body', subtype: 'any', minValue: 0, minCurrency: 'divine' })
   const [market, setMarket] = useState<SlotMarket | null>(null)
+  const [divine, setDivine] = useState<number | null>(null)
   const [item, setItem] = useState<{ item: ParsedItem | null } | null>(null)
   const [check, setCheck] = useState<PriceCheck | null>(null)
   const [limits, setLimits] = useState<Limits | null>(null)
   const recording = useRef(false)
-  const marketSlotRef = useRef(marketSlot)
-  marketSlotRef.current = marketSlot
+  const queryRef = useRef(query)
+  queryRef.current = query
 
   useEffect(() => {
-    window.api.getSettings().then(setSettings)
+    window.api.getSettings().then((s) => {
+      setSettings(s)
+      setQueryState((q) => ({ ...q, minValue: s.marketMin.value, minCurrency: s.marketMin.currency }))
+    })
     window.api.getLimits().then(setLimits)
+    window.api.getDivine().then(setDivine)
   }, [])
+
+  const setQuery = (q: MarketQuery) => {
+    setQueryState(q)
+    const m = settings?.marketMin
+    if (settings && (m?.value !== q.minValue || m?.currency !== q.minCurrency)) {
+      const marketMin = { value: q.minValue, currency: q.minCurrency }
+      setSettings({ ...settings, marketMin })
+      window.api.saveSettings({ marketMin })
+    }
+  }
+
+  const sameQuery = (m: SlotMarket) => m.slot === queryRef.current.slot && m.subtype === queryRef.current.subtype
 
   useEffect(
     () =>
@@ -38,12 +56,16 @@ export function App() {
           if (e.id === 'price') setTab('market')
           if (e.id === 'tab') setTab((t) => TABS[(TABS.indexOf(t) + 1) % TABS.length])
         }
-        if (e.type === 'market' && e.data.slot === marketSlotRef.current) setMarket(e.data)
+        if (e.type === 'market' && sameQuery(e.data)) {
+          setMarket(e.data)
+          if (e.data.divine) setDivine(e.data.divine)
+        }
         if (e.type === 'item') {
           setItem({ item: e.item })
           if (e.item?.slot) {
             setCraftSlot(e.item.slot)
-            if (e.mode === 'price') setMarketSlot(e.item.slot)
+            const slot = e.item.slot
+            if (e.mode === 'price') setQueryState((q) => ({ ...q, slot, subtype: SUBTYPES[slot][0].id }))
           }
           if (e.mode === 'price' && !e.item) setCheck(null)
         }
@@ -53,14 +75,34 @@ export function App() {
     []
   )
 
-  // кэш рынка для выбранного слота (main сам запустит сканирование, если кэш устарел)
+  // показываем только кэш; трейд опрашивается по кнопке «Найти», чтобы не тратить лимиты
   useEffect(() => {
     if (tab !== 'market') return
     setMarket(null)
-    window.api.getMarket(marketSlot).then((m) => {
-      if (m.slot === marketSlotRef.current) setMarket((cur) => (cur?.scanning ? cur : m))
+    window.api.getMarket(query).then((m) => {
+      if (sameQuery(m)) setMarket((cur) => (cur?.scanning ? cur : m))
     })
-  }, [marketSlot, tab, settings?.league])
+  }, [query.slot, query.subtype, query.minValue, query.minCurrency, tab, settings?.league])
+
+  const openExample = (e: ExampleItem) => {
+    const explicit = e.mods.filter((m) => m.kind !== 'implicit' && m.kind !== 'enchant')
+    setItem({
+      item: {
+        itemClass: '',
+        rarity: e.rarity,
+        name: e.name,
+        baseType: e.baseType,
+        itemLevel: e.ilvl,
+        slot: query.slot,
+        implicits: e.mods.filter((m) => m.kind === 'implicit' || m.kind === 'enchant').map((m) => m.text),
+        mods: explicit.map((m) => m.text),
+        modTiers: explicit.map((m) => m.tier),
+        corrupted: e.corrupted
+      }
+    })
+    setCraftSlot(query.slot)
+    setTab('craft')
+  }
 
   // локальные сочетания: работают, только когда окно оверлея в фокусе
   useEffect(() => {
@@ -123,11 +165,13 @@ export function App() {
           <MarketTab
             t={t}
             lang={settings.lang}
-            slot={marketSlot}
-            setSlot={setMarketSlot}
+            query={query}
+            setQuery={setQuery}
             market={market}
+            divine={divine}
             check={check}
             clearCheck={() => setCheck(null)}
+            onExample={openExample}
           />
         )}
         {tab === 'settings' && (

@@ -15,8 +15,23 @@ export interface Listing {
     price?: { type: string; amount: number; currency: string }
     account: { name: string }
   }
-  item: { baseType: string; typeLine: string; name?: string; ilvl?: number }
+  item: {
+    baseType: string
+    typeLine: string
+    name?: string
+    ilvl?: number
+    rarity?: string
+    corrupted?: boolean
+    implicitMods?: RawMod[]
+    explicitMods?: RawMod[]
+    craftedMods?: RawMod[]
+    fracturedMods?: RawMod[]
+    enchantMods?: RawMod[]
+  }
 }
+
+/** Трейд отдаёт моды строками (старый формат) или объектами с тирами (новый). */
+export type RawMod = string | { description: string; domain?: string; flags?: { crafted?: boolean; fractured?: boolean }; mods?: { tier?: string }[] }
 
 function headers(json = false): Record<string, string> {
   const h: Record<string, string> = { 'User-Agent': USER_AGENT, Accept: 'application/json' }

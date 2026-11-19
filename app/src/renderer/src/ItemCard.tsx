@@ -22,7 +22,16 @@ export function ItemCard({ item, t, onClose }: { item: ParsedItem; t: T; onClose
       {item.implicits.length > 0 && (
         <ul className="mods implicit">{item.implicits.map((m, i) => <li key={i}>{m}</li>)}</ul>
       )}
-      {item.mods.length > 0 && <ul className="mods">{item.mods.map((m, i) => <li key={i}>{m}</li>)}</ul>}
+      {item.mods.length > 0 && (
+        <ul className="mods">
+          {item.mods.map((m, i) => (
+            <li key={i}>
+              {item.modTiers?.[i] && <span className="tier">{item.modTiers[i]}</span>}
+              {m}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

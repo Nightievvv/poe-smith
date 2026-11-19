@@ -25,6 +25,7 @@ export function defaultSettings(): Settings {
     scanInterval: '30m',
     outlier: 'iqr1.5',
     maxAgeDays: 7,
+    marketMin: { value: 0, currency: 'divine' },
     window: {}
   }
 }

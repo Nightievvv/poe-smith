@@ -195,14 +195,6 @@ export function SettingsTab({ settings, t, failed, save, onRecording }: Props) {
       <select id="s-src" disabled>
         <option>poe.ninja</option>
       </select>
-      <label htmlFor="s-int">{t('set.interval')}</label>
-      <select id="s-int" value={settings.scanInterval} onChange={(e) => save({ scanInterval: e.target.value as Settings['scanInterval'] })}>
-        {(['30m', '1h', 'manual'] as const).map((v) => (
-          <option key={v} value={v}>
-            {t(`set.int.${v}`)}
-          </option>
-        ))}
-      </select>
       <label htmlFor="s-out">{t('set.outlier')}</label>
       <select id="s-out" value={settings.outlier} onChange={(e) => save({ outlier: e.target.value as Settings['outlier'] })}>
         {(['iqr1.5', 'iqr3', 'p10-90'] as const).map((v) => (
