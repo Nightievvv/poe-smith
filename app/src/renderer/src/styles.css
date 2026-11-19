@@ -216,6 +216,15 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; width: 100
 .missing label { flex: 1; }
 .missing .num { width: 80px; flex: 0 0 auto; }
 .set .row { align-items: center; justify-content: flex-end; }
+.mine { color: var(--brass); margin-right: 4px; }
+.ico.fav { margin: 0 4px 0 0; color: var(--muted); }
+.ico.fav.on { color: var(--brass); }
+.jentry { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel-2); }
+.jrow { align-items: end; }
+.jrow .field { flex: 1; min-width: 0; }
+.jrow input { width: 100%; }
+.jrow .ico { flex: 0 0 auto; }
+.ico.inline { width: 18px; height: 18px; display: inline-grid; place-items: center; margin-left: 4px; font-size: 11px; vertical-align: middle; }
 .opt { display: inline-block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }

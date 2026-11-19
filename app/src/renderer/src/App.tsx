@@ -5,9 +5,10 @@ import { matches } from './hotkeys'
 import { SettingsTab } from './SettingsTab'
 import { MarketTab } from './MarketTab'
 import { CraftTab } from './CraftTab'
+import { JournalTab } from './JournalTab'
 
-type Tab = 'craft' | 'market' | 'settings'
-const TABS: Tab[] = ['craft', 'market', 'settings']
+type Tab = 'craft' | 'market' | 'journal' | 'settings'
+const TABS: Tab[] = ['craft', 'market', 'journal', 'settings']
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -140,8 +141,11 @@ export function App() {
         )}
         {tab === 'market' && (
           <MarketTab t={t} lang={settings.lang} query={query} setQuery={setQuery} market={market} divine={divine}
-            onExample={(e: ExampleItem) => openCraft({ ...e, valueDiv: e.valueDiv ?? (e.priceDiv || undefined) })} />
+            onExample={(e: ExampleItem) => openCraft({ ...e, valueDiv: e.valueDiv ?? (e.priceDiv || undefined) })}
+            onReload={() => window.api.getMarket(query).then((m) => { if (sameQuery(m)) setMarket(m) })}
+            favorites={settings.favorites} setFavorites={(favorites) => save({ favorites })} />
         )}
+        {tab === 'journal' && <JournalTab t={t} divine={divine} />}
         {tab === 'settings' && (
           <SettingsTab
             settings={settings}

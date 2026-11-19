@@ -4,7 +4,7 @@ import { loadSettings, writeSettings, hasSession, setSession, clearSession } fro
 import { fetchLeagues } from './leagues'
 import {
   HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type Lang, type MarketQuery, type OverlayEvent, type ParsedItem, type PcFilter,
-  type PriceCheckState, type Settings, type ValueEstimate
+  type PriceCheckState, type Settings, type ValueEstimate, type JournalEntry
 } from '../shared/types'
 import { parseItem } from '../shared/poe1/item'
 import { copyItemText } from './poe1/copy'
@@ -17,6 +17,9 @@ import { getCached, scan } from './poe1/market'
 import { getRates } from './poe1/ninja'
 import { limits } from './poe1/trade'
 import { foregroundTitle, isGameTitle } from './poe1/focus'
+import { addFromPriceCheck, removeCustom } from './poe1/customprofiles'
+import { addJournal, listJournal, removeJournal, updateJournal } from './journal'
+import { checkNow, startWatcher, type WatcherDeps } from './watcher'
 
 let win: BrowserWindow | null = null
 let settings: Settings
@@ -38,12 +41,18 @@ function showOverlay() {
   win.focus()
 }
 
+/** Скрыть оверлей вместе с окном прайс-чека. */
+function hideAll() {
+  userVisible = false
+  pcVisible = false
+  win?.hide()
+  if (pcWin && !pcWin.isDestroyed()) pcWin.hide()
+}
+
 function toggleOverlay() {
   if (!win) return
-  if (win.isVisible()) {
-    userVisible = false
-    win.hide()
-  } else showOverlay()
+  if (win.isVisible()) hideAll()
+  else showOverlay()
 }
 
 /** «Показывать только когда игра активна»: прячем окна, когда активно что-то кроме игры и самого оверлея. */
@@ -221,10 +230,7 @@ ipcMain.handle('hotkeys:suspend', (_e, suspend: boolean) => {
   if (suspend) globalShortcut.unregisterAll()
   else registerHotkeys()
 })
-ipcMain.on('overlay:hide', () => {
-  userVisible = false
-  win?.hide()
-})
+ipcMain.on('overlay:hide', () => hideAll())
 
 // Рынок: трейд опрашивается только по явной команде пользователя («Найти» / «Загрузить ещё»)
 ipcMain.handle('market:get', async (_e, q: MarketQuery) => getCached(await currentLeague(), q))
@@ -304,6 +310,36 @@ ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lan
     sendLimits()
   }
 })
+// фоновые уведомления о выгодных крафтах по избранным профилям
+const watcherDeps: WatcherDeps = {
+  settings: () => settings,
+  league: currentLeague,
+  onLimits: sendLimits,
+  openCraft: (item) => {
+    userVisible = true
+    win?.show()
+    send({ type: 'openCraft', item })
+  }
+}
+ipcMain.handle('watcher:check', () => checkNow(watcherDeps))
+
+// журнал крафтов
+ipcMain.handle('journal:list', () => listJournal())
+ipcMain.handle('journal:add', (_e, entry: Omit<JournalEntry, 'id' | 'date'>) => addJournal(entry))
+ipcMain.handle('journal:update', (_e, id: string, patch: Partial<JournalEntry>) => updateJournal(id, patch))
+ipcMain.handle('journal:remove', (_e, id: string) => removeJournal(id))
+
+// свои профили рынка
+ipcMain.handle('profile:save', (_e, item: ParsedItem, filters: PcFilter[], name: string) => {
+  try {
+    addFromPriceCheck(item, filters, name.trim() || item.name)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+})
+ipcMain.handle('profile:delete', (_e, id: string) => removeCustom(id))
+
 // таблица стоимостей Harvest — обычный JSON-файл, его можно открыть и поправить
 ipcMain.handle('harvest:open', () => shell.openPath(harvestFile()))
 ipcMain.handle('harvest:reset', () => resetHarvest())
@@ -316,8 +352,11 @@ ipcMain.on('craft:open', (_e, item: ParsedItem) => {
 app.on('second-instance', showOverlay)
 app.whenReady().then(() => {
   settings = loadSettings()
+  // без идентификатора приложения Windows не показывает уведомления
+  app.setAppUserModelId('local.exileforge.overlay')
   createWindow()
   watchFocus()
+  startWatcher(watcherDeps)
   registerHotkeys()
 })
 app.on('will-quit', () => globalShortcut.unregisterAll())

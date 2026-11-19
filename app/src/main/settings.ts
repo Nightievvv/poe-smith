@@ -14,8 +14,8 @@ export function defaultSettings(): Settings {
     league: '',
     hotkeys: {
       toggle: 'Ctrl+Shift+F',
-      read: 'Ctrl+D',
-      price: 'Ctrl+Alt+D',
+      read: 'Ctrl+Alt+D',
+      price: 'Ctrl+D',
       click: 'Ctrl+Shift+T',
       step: 'Ctrl+Shift+N',
       tab: 'Ctrl+Tab'
@@ -28,6 +28,10 @@ export function defaultSettings(): Settings {
     marketMin: { value: 0, currency: 'divine' },
     customPrices: {},
     onlyWhenGameFocused: false,
+    favorites: [],
+    // уведомления о выгодных крафтах — по желанию, по умолчанию выключены
+    notify: false,
+    notifyEveryMin: 60,
     window: {}
   }
 }
@@ -36,7 +40,11 @@ export function loadSettings(): Settings {
   const def = defaultSettings()
   try {
     if (!existsSync(settingsPath())) return def
-    const raw = JSON.parse(readFileSync(settingsPath(), 'utf-8')) as Partial<Settings>
+    const raw = JSON.parse(readFileSync(settingsPath(), 'utf-8')) as Partial<Settings> & { v?: number }
+    // миграция v2: умолчания «прайс-чек ↔ крафт» поменялись местами; переназначенные вручную клавиши не трогаем
+    if ((raw.v ?? 1) < 2 && raw.hotkeys?.read === 'Ctrl+D' && raw.hotkeys?.price === 'Ctrl+Alt+D') {
+      raw.hotkeys = { ...raw.hotkeys, read: 'Ctrl+Alt+D', price: 'Ctrl+D' }
+    }
     return {
       ...def,
       ...raw,
@@ -51,7 +59,7 @@ export function loadSettings(): Settings {
 
 export function writeSettings(s: Settings): void {
   mkdirSync(dir(), { recursive: true })
-  writeFileSync(settingsPath(), JSON.stringify(s, null, 2), 'utf-8')
+  writeFileSync(settingsPath(), JSON.stringify({ ...s, v: 2 }, null, 2), 'utf-8')
 }
 
 // ---------- POESESSID: хранится только локально, зашифрован средствами Windows (DPAPI) ----------

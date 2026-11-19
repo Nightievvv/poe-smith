@@ -22,6 +22,7 @@ interface Props {
 
 export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSignal, customPrices, saveCustomPrices }: Props) {
   const [priceDraft, setPriceDraft] = useState<Record<string, string>>({})
+  const [journalMsg, setJournalMsg] = useState<string | null>(null)
   const [selected, setSelected] = useState<boolean[]>([])
   const [plan, setPlan] = useState<CraftPlan | null>(null)
   const [vi, setVi] = useState(0)
@@ -215,6 +216,20 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
             </div>
           )}
           {plan.variants[vi]?.notes.map((n, i) => <p key={i} className="note">{n}</p>)}
+          {plan.variants[vi] && (
+            <div className="row end">
+              <button className="btn" onClick={async () => {
+                const v = plan.variants[vi]
+                await window.api.journalAdd({
+                  itemName: item.name, baseType: item.baseType, variant: v.name, mechanics: v.mechanics,
+                  plannedMin: v.costMin, plannedMax: v.costMax, valueChaos: valueChaos ?? null,
+                  spentChaos: null, soldChaos: null, status: 'crafting'
+                })
+                setJournalMsg(t('craft.journalAdded'))
+              }}>{t('craft.toJournal')}</button>
+              {journalMsg && <span className="muted small">{journalMsg}</span>}
+            </div>
+          )}
           <ol className="steps">
             {(plan.variants[vi]?.steps ?? []).map((s, i) => (
               <li key={i} className={'step k-' + s.kind + (s.optional ? ' optional' : '') + (done[i] ? ' done' : '')}>

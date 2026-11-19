@@ -18,6 +18,7 @@ export function SettingsTab({ settings, t, failed, save, onRecording }: Props) {
   const [sess, setSess] = useState('')
   const [showSess, setShowSess] = useState(false)
   const [sessMsg, setSessMsg] = useState<'format' | 'encryption' | null>(null)
+  const [checking, setChecking] = useState(false)
 
   useEffect(() => {
     window.api.getLeagues().then(setLeagues)
@@ -147,6 +148,28 @@ export function SettingsTab({ settings, t, failed, save, onRecording }: Props) {
       </label>
       <input type="checkbox" className="switch" id="s-focus" checked={settings.onlyWhenGameFocused}
         onChange={(e) => save({ onlyWhenGameFocused: e.target.checked })} />
+
+      <div className="h">{t('set.notify')}</div>
+      <label htmlFor="s-notify">
+        {t('set.notifyOn')}
+        <span className="sub">{t('set.notifySub')}</span>
+      </label>
+      <input type="checkbox" className="switch" id="s-notify" checked={settings.notify}
+        onChange={(e) => save({ notify: e.target.checked })} />
+      {settings.notify && (
+        <>
+          <label htmlFor="s-notify-every">{t('set.notifyEvery')}</label>
+          <select id="s-notify-every" value={settings.notifyEveryMin}
+            onChange={(e) => save({ notifyEveryMin: Number(e.target.value) as Settings['notifyEveryMin'] })}>
+            {([60, 120, 240] as const).map((m) => <option key={m} value={m}>{t('set.everyH', { n: m / 60 })}</option>)}
+          </select>
+          <span className="small">{t('set.favorites', { n: settings.favorites.length })}</span>
+          <button className="btn" disabled={!settings.favorites.length || checking} onClick={async () => {
+            setChecking(true)
+            try { await window.api.checkFavorites() } finally { setChecking(false) }
+          }}>{checking ? t('set.checking') : t('set.checkNow')}</button>
+        </>
+      )}
 
       <div className="h">{t('set.craft')}</div>
       <span className="full small muted">{t('set.customPricesHint')}</span>

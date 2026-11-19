@@ -127,12 +127,12 @@ export async function getCached(league: string, q: MarketQuery): Promise<SlotMar
   const rates = await getRates(league).catch(() => null)
   const minChaos = minChaosOf(q, rates)
   const all = profilesFor(q.slot, q.subtype)
-  return (
-    store.slots[key(league, q, minChaos)] ?? {
-      slot: q.slot, subtype: q.subtype, minChaos, hasMore: all.length > 0, totalProfiles: all.length,
-      league, scannedAt: null, scanning: false, profiles: [], divine: rates?.divine
-    }
-  )
+  const cached = store.slots[key(league, q, minChaos)]
+  if (!cached)
+    return { slot: q.slot, subtype: q.subtype, minChaos, hasMore: all.length > 0, totalProfiles: all.length, league, scannedAt: null, scanning: false, profiles: [], divine: rates?.divine }
+  // набор профилей мог измениться (добавили или удалили свой) — сверяем кэш с текущим списком
+  const profiles = cached.profiles.filter((r) => all.some((p) => p.id === r.id))
+  return { ...cached, profiles, totalProfiles: all.length, hasMore: profiles.length < all.length }
 }
 
 const running = new Set<string>()
@@ -160,7 +160,7 @@ export async function scan(league: string, q: MarketQuery, more: boolean, settin
         const res = await runQuery(league, specFor(p, q, minChaos), settings, q.slot)
         const hk = `${league}|${p.id}|${minChaos}`
         const hist = (store.history[hk] ??= [])
-        r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, ...res, trend: trendFor(hist, res.median), craftItem: craftItemFor(p, q, res.examples, res.median) }
+        r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, custom: p.custom, ...res, trend: trendFor(hist, res.median), craftItem: craftItemFor(p, q, res.examples, res.median) }
         if (res.median) hist.push({ t: Date.now(), m: res.median })
         store.history[hk] = hist.slice(-200)
       } catch (e) {
@@ -182,4 +182,25 @@ export async function scan(league: string, q: MarketQuery, more: boolean, settin
   store.slots[k] = cur
   persist()
   emit(cur)
+}
+
+/** Проверка одного профиля (для фоновых уведомлений): 1 поиск + выгрузка, результат кладётся в кэш рынка. */
+export async function scanOne(league: string, q: MarketQuery, profileId: string, settings: Settings): Promise<ProfileResult | null> {
+  const p = profilesFor(q.slot, q.subtype).find((x) => x.id === profileId)
+  if (!p) return null
+  const rates = await getRates(league)
+  const minChaos = minChaosOf(q, rates)
+  const res = await runQuery(league, specFor(p, q, minChaos), settings, q.slot)
+  const hk = `${league}|${p.id}|${minChaos}`
+  const hist = (store.history[hk] ??= [])
+  const r: ProfileResult = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, custom: p.custom, ...res, trend: trendFor(hist, res.median), craftItem: craftItemFor(p, q, res.examples, res.median) }
+  if (res.median) hist.push({ t: Date.now(), m: res.median })
+  store.history[hk] = hist.slice(-200)
+  const k = key(league, q, minChaos)
+  const all = profilesFor(q.slot, q.subtype)
+  const cur = store.slots[k] ?? { slot: q.slot, subtype: q.subtype, minChaos, league, totalProfiles: all.length, hasMore: true, scanning: false, scannedAt: null, profiles: [], divine: rates.divine }
+  const profiles = cur.profiles.some((x) => x.id === r.id) ? cur.profiles.map((x) => (x.id === r.id ? r : x)) : [...cur.profiles, r]
+  store.slots[k] = { ...cur, profiles, divine: rates.divine, hasMore: profiles.length < all.length }
+  persist()
+  return r
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ExampleItem, Lang, MarketQuery, SlotId, SlotMarket } from '../../shared/types'
+import type { ExampleItem, FavoriteProfile, Lang, MarketQuery, SlotId, SlotMarket } from '../../shared/types'
 import { SUBTYPES } from '../../shared/poe1/catalog'
 import type { T } from './i18n'
 import { SlotSelect } from './SlotSelect'
@@ -17,9 +17,17 @@ interface Props {
   market: SlotMarket | null
   divine: number | null
   onExample: (e: ExampleItem) => void
+  onReload: () => void
+  favorites: FavoriteProfile[]
+  setFavorites: (f: FavoriteProfile[]) => void
 }
 
-export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate, onExample }: Props) {
+export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate, onExample, onReload, favorites, setFavorites }: Props) {
+  const favKey = (id: string) => (f: FavoriteProfile) => f.profileId === id && f.slot === query.slot && f.subtype === query.subtype
+  const isFav = (id: string) => favorites.some(favKey(id))
+  const toggleFav = (id: string, name: FavoriteProfile['name']) =>
+    setFavorites(isFav(id) ? favorites.filter((f) => !favKey(id)(f))
+      : [...favorites, { profileId: id, name, slot: query.slot, subtype: query.subtype, minValue: query.minValue, minCurrency: query.minCurrency }])
   const [sort, setSort] = useState<Sort>('score')
   const [sel, setSel] = useState<string | null>(null)
   // черновик отсечки: в запрос попадает только по «Найти» или Enter
@@ -123,7 +131,17 @@ export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate
                 {rows.map(({ r, pop }) => (
                   <tr key={r.id} className={selected?.r.id === r.id ? 'sel' : ''} onClick={() => setSel(r.id)}>
                     <td>
-                      <div className="iname r-rare">{r.name[lang]}</div>
+                      <div className="iname r-rare">
+                        <button className={'ico inline fav' + (isFav(r.id) ? ' on' : '')} aria-pressed={isFav(r.id)}
+                          aria-label={t('market.favorite')} title={t('market.favorite')}
+                          onClick={(e) => { e.stopPropagation(); toggleFav(r.id, r.name) }}>{isFav(r.id) ? '★' : '☆'}</button>
+                        {r.custom && <span className="mine" title={t('market.custom')}>✎</span>}
+                        {r.name[lang]}
+                        {r.custom && (
+                          <button className="ico inline" aria-label={t('market.deleteProfile')} title={t('market.deleteProfile')}
+                            onClick={async (e) => { e.stopPropagation(); await window.api.deleteProfile(r.id); onReload() }}>✕</button>
+                        )}
+                      </div>
                       {r.error && <div className="bad small">{errText(t, r.error)}</div>}
                     </td>
                     <td className="n">{fmtPrice(r.median, divine)}</td>

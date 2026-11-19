@@ -22,6 +22,8 @@ export function PriceCheckApp() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const searchId = useRef(0)
+  const [profileName, setProfileName] = useState('')
+  const [profileMsg, setProfileMsg] = useState<string | null>(null)
 
   const t = useMemo(() => makeT(settings?.lang ?? 'ru'), [settings?.lang])
 
@@ -42,6 +44,7 @@ export function PriceCheckApp() {
   const accept = (s: PriceCheckState | null) => {
     setState(s)
     setResult(null)
+    setProfileMsg(null)
     if (!s) return
     setFilters(s.filters)
     run(s, s.filters) // первый поиск сразу, дальше — по кнопке «Искать»
@@ -71,7 +74,7 @@ export function PriceCheckApp() {
         <button className="ico" aria-label={t('hide')} title={t('hide')} onClick={() => window.api.closePriceCheck()}>✕</button>
       </div>
       <div className="ov-body">
-        {!state && <p className="placeholder">{t('pc.empty', { key: settings?.hotkeys.price ?? 'Ctrl+Alt+D' })}</p>}
+        {!state && <p className="placeholder">{t('pc.empty', { key: settings?.hotkeys.price ?? 'Ctrl+D' })}</p>}
         {state && (
           <>
             <ItemCard item={state.item} t={t} hideMods
@@ -124,6 +127,19 @@ export function PriceCheckApp() {
               <button className="btn primary" disabled={loading} onClick={() => run(state, filters)}>{t('pc.search')}</button>
               <button className="btn" disabled={loading} onClick={() => setFilters(state.filters)}>{t('pc.reset')}</button>
             </div>
+            <form className="row end" onSubmit={async (e) => {
+              e.preventDefault()
+              const r = await window.api.saveProfile(state.item, filters, profileName)
+              setProfileMsg(r.ok ? t('pc.profileSaved') : r.error === 'NO_SLOT' ? t('pc.profileNoSlot') : r.error ?? '')
+              if (r.ok) setProfileName('')
+            }}>
+              <div className="field">
+                <label htmlFor="pc-pname">{t('pc.profileName')}</label>
+                <input id="pc-pname" type="text" value={profileName} placeholder={state.item.name} onChange={(e) => setProfileName(e.target.value)} />
+              </div>
+              <button type="submit" className="btn">{t('pc.saveProfile')}</button>
+            </form>
+            {profileMsg && <p className="muted small">{profileMsg}</p>}
             {loading && <p className="note">{t('item.checking')}</p>}
             {error && <p className="note warn">{errText(t, error)}</p>}
             {result && !loading && (

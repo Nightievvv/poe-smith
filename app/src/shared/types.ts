@@ -35,7 +35,20 @@ export interface Settings {
   customPrices: Record<string, number>
   /** показывать оверлей только когда активна игра (или само окно оверлея) */
   onlyWhenGameFocused: boolean
+  /** избранные профили рынка — их проверяет фоновый поиск выгодных крафтов */
+  favorites: FavoriteProfile[]
+  notify: boolean
+  notifyEveryMin: 60 | 120 | 240
   window: { x?: number; y?: number; width?: number; height?: number }
+}
+
+export interface FavoriteProfile {
+  profileId: string
+  name: { ru: string; en: string }
+  slot: SlotId
+  subtype: string
+  minValue: number
+  minCurrency: 'chaos' | 'divine'
 }
 
 export interface League {
@@ -108,6 +121,8 @@ export interface ProfileResult {
   examples?: ExampleItem[]
   /** целевой предмет для крафта по профилю: самая частая база + моды по порогам профиля */
   craftItem?: ParsedItem
+  /** свой профиль пользователя */
+  custom?: boolean
   error?: string
 }
 
@@ -282,6 +297,24 @@ export interface CraftPlan {
   missingPrices: string[]
 }
 
+/** Запись журнала крафтов: план против факта. Суммы в Chaos. */
+export interface JournalEntry {
+  id: string
+  date: number
+  itemName: string
+  baseType: string
+  variant: string
+  mechanics: string[]
+  plannedMin: number
+  plannedMax: number
+  /** ожидаемая цена продажи на момент плана */
+  valueChaos: number | null
+  spentChaos: number | null
+  soldChaos: number | null
+  status: 'crafting' | 'done' | 'sold' | 'failed'
+  note?: string
+}
+
 export interface CraftDataStatus {
   ready: boolean
   loading: boolean
@@ -327,6 +360,15 @@ export interface Api {
   /** план крафта: targets — индексы модов item.mods, которые нужно получить */
   craftPlan(item: ParsedItem, targets: number[], lang: Lang): Promise<CraftPlan>
   craftDataStatus(): Promise<CraftDataStatus>
+  /** проверить избранные профили прямо сейчас (обычно — раз в N минут в фоне) */
+  checkFavorites(): Promise<void>
+  journalList(): Promise<JournalEntry[]>
+  journalAdd(e: Omit<JournalEntry, 'id' | 'date'>): Promise<JournalEntry>
+  journalUpdate(id: string, patch: Partial<JournalEntry>): Promise<void>
+  journalRemove(id: string): Promise<void>
+  /** сохранить включённые фильтры прайс-чека как свой профиль рынка */
+  saveProfile(item: ParsedItem, filters: PcFilter[], name: string): Promise<{ ok: boolean; error?: string }>
+  deleteProfile(id: string): Promise<void>
   /** открыть JSON с таблицей стоимостей Harvest / вернуть значения по умолчанию */
   openHarvestFile(): Promise<void>
   resetHarvestFile(): Promise<void>

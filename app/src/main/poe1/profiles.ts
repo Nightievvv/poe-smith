@@ -1,4 +1,5 @@
 import type { I18nText, SlotId } from '../../shared/types'
+import { listCustom } from './customprofiles'
 
 /**
  * Профиль — «типичный ходовой предмет»: минимальные значения ключевых модов.
@@ -44,6 +45,10 @@ export interface Profile {
   recipe?: string
   /** для каких типов предмета профиль имеет смысл (id из catalog.ts); не задано — для всех */
   only?: string[]
+  /** свой профиль пользователя (создан из прайс-чека) */
+  custom?: boolean
+  /** тексты модов для планировщика крафта (у своих профилей) */
+  targetMods?: string[]
 }
 
 const s = (id: string, min?: number, max?: number): Stat => ({ id, min, max })
@@ -223,6 +228,7 @@ export const PROFILES: Profile[] = [
  * null — профиль задан не модами (DPS, кластеры, флаконы): тогда цели берутся из типичного лота.
  */
 export function profileTargetMods(p: Profile): string[] | null {
+  if (p.targetMods?.length) return p.targetMods
   if (!p.stats?.length || p.stats.some((s) => s.id === STAT.clusterPassives)) return null
   const out: string[] = []
   for (const { id, min } of p.stats) {
@@ -256,5 +262,6 @@ export function profileTargetMods(p: Profile): string[] | null {
   return out
 }
 
+/** Свои профили идут первыми — они сканируются в первой пачке. */
 export const profilesFor = (slot: SlotId, subtype: string) =>
-  PROFILES.filter((p) => p.slot === slot && (!p.only || p.only.includes(subtype)))
+  [...listCustom(), ...PROFILES].filter((p) => p.slot === slot && (!p.only || p.only.includes(subtype)))
