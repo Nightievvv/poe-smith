@@ -2,7 +2,12 @@ import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from 'elec
 import { join } from 'path'
 import { loadSettings, writeSettings, hasSession, setSession, clearSession } from './settings'
 import { fetchLeagues } from './leagues'
-import { HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type OverlayEvent, type Settings } from '../shared/types'
+import { HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type OverlayEvent, type Settings, type SlotId } from '../shared/types'
+import { parseItem } from '../shared/poe1/item'
+import { copyItemText } from './poe1/copy'
+import { priceCheck } from './poe1/pricecheck'
+import { getSlot, isStale, scanSlot } from './poe1/market'
+import { limits } from './poe1/trade'
 
 let win: BrowserWindow | null = null
 let settings: Settings
@@ -30,16 +35,36 @@ function applyClickThrough() {
   send({ type: 'clickThrough', value: settings.clickThrough })
 }
 
+/** Лига для запросов: выбранная в настройках или текущая Softcore. */
+async function currentLeague(): Promise<string> {
+  if (settings.league) return settings.league
+  const info = await fetchLeagues()
+  return info.currentSoftcore ?? 'Standard'
+}
+
+function sendLimits() {
+  send({ type: 'limits', data: limits() })
+}
+
+/** Ctrl+C в игре → разбор предмета → (для оценки) поиск похожих на трейде. */
+async function readItem(mode: 'read' | 'price') {
+  // если в фокусе сам оверлей, Ctrl+C ушёл бы ему, а не игре
+  const text = win?.isFocused() ? null : await copyItemText()
+  const item = text ? parseItem(text) : null
+  if (win && !win.isVisible()) win.showInactive() // не забираем фокус у игры
+  send({ type: 'item', item, mode })
+  send({ type: 'hotkey', id: mode })
+  if (mode !== 'price' || !item) return
+  send({ type: 'priceCheck', data: { item, criteria: [], result: null, loading: true } })
+  const data = await priceCheck(await currentLeague(), item, settings)
+  send({ type: 'priceCheck', data })
+  sendLimits()
+}
+
 const actions: Record<HotkeyId, () => void> = {
   toggle: toggleOverlay,
-  read: () => {
-    showOverlay()
-    send({ type: 'hotkey', id: 'read' })
-  },
-  price: () => {
-    showOverlay()
-    send({ type: 'hotkey', id: 'price' })
-  },
+  read: () => void readItem('read'),
+  price: () => void readItem('price'),
   click: () => {
     settings = { ...settings, clickThrough: !settings.clickThrough }
     writeSettings(settings)
@@ -129,6 +154,22 @@ ipcMain.handle('hotkeys:suspend', (_e, suspend: boolean) => {
   else registerHotkeys()
 })
 ipcMain.on('overlay:hide', () => win?.hide())
+
+function startScan(league: string, slot: SlotId) {
+  const timer = setInterval(sendLimits, 1000)
+  scanSlot(league, slot, settings, (data) => send({ type: 'market', data })).finally(() => {
+    clearInterval(timer)
+    sendLimits()
+  })
+}
+ipcMain.handle('market:get', async (_e, slot: SlotId) => {
+  const league = await currentLeague()
+  const m = getSlot(league, slot)
+  if (isStale(m, settings)) startScan(league, slot)
+  return m
+})
+ipcMain.handle('market:scan', async (_e, slot: SlotId) => startScan(await currentLeague(), slot))
+ipcMain.handle('limits:get', () => limits())
 
 app.on('second-instance', showOverlay)
 app.whenReady().then(() => {

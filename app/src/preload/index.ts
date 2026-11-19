@@ -9,6 +9,9 @@ const api: Api = {
   setSession: (v) => ipcRenderer.invoke('session:set', v),
   clearSession: () => ipcRenderer.invoke('session:clear'),
   suspendHotkeys: (s) => ipcRenderer.invoke('hotkeys:suspend', s),
+  getMarket: (slot) => ipcRenderer.invoke('market:get', slot),
+  scanMarket: (slot) => ipcRenderer.invoke('market:scan', slot),
+  getLimits: () => ipcRenderer.invoke('limits:get'),
   hide: () => ipcRenderer.send('overlay:hide'),
   onEvent: (cb) => {
     const h = (_: unknown, e: OverlayEvent) => cb(e)
