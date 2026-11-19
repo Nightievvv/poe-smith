@@ -75,7 +75,12 @@ export function PriceCheckApp() {
         {state && (
           <>
             <ItemCard item={state.item} t={t} hideMods
-              extra={<button className="btn" title={t('market.toCraft')} onClick={() => window.api.openInCraft(state.item)}>{t('pc.toCraft')}</button>} />
+              extra={<button className="btn" title={t('market.toCraft')} onClick={() => {
+                // цена для расчёта прибыли — медиана 10 самых дешёвых найденных лотов
+                const v = (result?.rows ?? []).slice(0, 10).map((r) => r.priceDiv).sort((a, b) => a - b)
+                const valueDiv = v.length ? v[Math.floor((v.length - 1) / 2)] : undefined
+                window.api.openInCraft({ ...state.item, valueDiv })
+              }}>{t('pc.toCraft')}</button>} />
             {GROUPS.map((g) => {
               const list = filters.filter((f) => g.kinds.includes(f.kind))
               if (!list.length) return null

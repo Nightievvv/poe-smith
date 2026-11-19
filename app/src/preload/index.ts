@@ -18,6 +18,7 @@ const api: Api = {
   closePriceCheck: () => ipcRenderer.send('pc:close'),
   craftPlan: (item, targets, lang) => ipcRenderer.invoke('craft:plan', item, targets, lang),
   craftDataStatus: () => ipcRenderer.invoke('craft:status'),
+  estimateValue: (item) => ipcRenderer.invoke('craft:value', item),
   openInCraft: (item) => ipcRenderer.send('craft:open', item),
   hide: () => ipcRenderer.send('overlay:hide'),
   onEvent: (cb) => {

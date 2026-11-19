@@ -24,7 +24,7 @@ interface Store {
   history: Record<string, { t: number; m: number }[]>
 }
 
-const VERSION = 3
+const VERSION = 4
 const file = () => join(app.getPath('userData'), 'market-cache.json')
 let store: Store = { v: VERSION, slots: {}, history: {} }
 try {
@@ -119,7 +119,7 @@ function craftItemFor(p: Profile, q: MarketQuery, examples: ExampleItem[], media
     ? texts.map((text) => ({ text, kind: 'explicit' as const }))
     : (typical?.mods ?? []).filter((m) => m.kind !== 'implicit' && m.kind !== 'enchant').map((m) => ({ ...m, kind: m.kind === 'crafted' ? ('crafted' as const) : m.kind }))
   if (!mods.length) return undefined
-  return { itemClass: '', rarity: p.rarity === 'magic' ? 'Magic' : 'Rare', name: '', baseType, itemLevel: ilvl, slot: q.slot, mods, props: {}, corrupted: false }
+  return { itemClass: '', rarity: p.rarity === 'magic' ? 'Magic' : 'Rare', name: '', baseType, itemLevel: ilvl, slot: q.slot, mods, props: {}, corrupted: false, valueDiv: median || undefined }
 }
 
 /** Только кэш: без запросов к трейду. */

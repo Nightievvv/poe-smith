@@ -167,6 +167,16 @@ export interface ParsedItem {
   mods: ItemMod[]
   props: ItemProps
   corrupted: boolean
+  /** рыночная цена готового предмета в Divine, если известна (профиль, лот, прайс-чек) */
+  valueDiv?: number
+}
+
+export interface ValueEstimate {
+  valueDiv: number
+  /** по скольким лотам считали */
+  count: number
+  total: number
+  tradeUrl: string
 }
 
 // ---------- прайс-чек ----------
@@ -215,6 +225,8 @@ export interface CraftCost {
   count: string
   /** ожидаемая стоимость в Chaos (если известна цена) */
   chaos?: number
+  /** расход зависит от удачи (попытки) — для него считается диапазон 50–100% */
+  attempts?: boolean
 }
 
 export interface CraftStep {
@@ -247,6 +259,9 @@ export interface CraftVariant {
   steps: CraftStep[]
   /** ожидаемая стоимость: основной метод + доводка с учётом шанса, что мод уже выпал */
   totalChaos: number | null
+  /** диапазон стоимости: попытки считаются от 50% до 100% расчётного количества */
+  costMin: number
+  costMax: number
   /** заметки к варианту (риски, допущения) */
   notes: string[]
 }
@@ -306,6 +321,8 @@ export interface Api {
   /** план крафта: targets — индексы модов item.mods, которые нужно получить */
   craftPlan(item: ParsedItem, targets: number[], lang: Lang): Promise<CraftPlan>
   craftDataStatus(): Promise<CraftDataStatus>
+  /** рыночная цена предмета: медиана 10 самых дешёвых похожих лотов (1 поиск на трейде) */
+  estimateValue(item: ParsedItem): Promise<ValueEstimate>
   /** открыть предмет во вкладке «Крафт» основного окна */
   openInCraft(item: ParsedItem): void
   hide(): void

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CraftDataStatus, CraftPlan, Lang, ParsedItem } from '../../shared/types'
 import type { T } from './i18n'
 import { ItemCard } from './ItemCard'
+import { errText } from './format'
 
 const fmtCost = (chaos: number | undefined, divine: number | null) =>
   chaos == null ? '' : divine && chaos >= divine ? `${(chaos / divine).toFixed(1)} div` : `${Math.max(1, Math.round(chaos))}c`
@@ -25,6 +26,11 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<CraftDataStatus | null>(null)
+  // цена продажи готового предмета (Divine) — для расчёта прибыли
+  const [valueDiv, setValueDiv] = useState<number | null>(null)
+  const [valueDraft, setValueDraft] = useState('')
+  const [valueBusy, setValueBusy] = useState(false)
+  const [valueNote, setValueNote] = useState<string | null>(null)
 
   useEffect(() => {
     window.api.craftDataStatus().then(setData)
@@ -38,7 +44,40 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
     setSelected(item ? item.mods.map(() => true) : [])
     setPlan(null)
     setError(null)
+    const v = item?.valueDiv ?? null
+    setValueDiv(v)
+    setValueDraft(v ? String(Math.round(v * 100) / 100) : '')
+    setValueNote(null)
   }, [item])
+
+  const estimate = async () => {
+    if (!item) return
+    setValueBusy(true)
+    setValueNote(null)
+    try {
+      const r = await window.api.estimateValue(item)
+      if (r.count) {
+        setValueDiv(r.valueDiv)
+        setValueDraft(String(Math.round(r.valueDiv * 100) / 100))
+        setValueNote(t('craft.valueFrom', { n: r.count, total: r.total }))
+      } else setValueNote(t('craft.valueNone'))
+    } catch (e) {
+      setValueNote(errText(t, e instanceof Error ? e.message : String(e)))
+    } finally {
+      setValueBusy(false)
+    }
+  }
+
+  const divine = plan?.divine ?? null
+  const valueChaos = valueDiv && divine ? valueDiv * divine : null
+  const profit = (v: CraftPlan['variants'][number]) => {
+    if (!valueChaos) return null
+    const lo = valueChaos - v.costMax
+    const hi = valueChaos - v.costMin
+    const mid = (lo + hi) / 2
+    return { lo, hi, pLo: lo / valueChaos, pHi: hi / valueChaos, pMid: mid / valueChaos }
+  }
+  const signed = (c: number) => (c < 0 ? '−' : '+') + fmtCost(Math.abs(c), divine)
 
   useEffect(() => {
     if (!plan || !stepSignal) return
@@ -82,8 +121,20 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
         onToggle={(i) => setSelected((s) => s.map((v, j) => (j === i ? !v : v)))} />
       <p className="muted small">{t('craft.pickHint')}</p>
       <div className="row end">
+        <div className="field">
+          <label htmlFor="c-value">{t('craft.value')}</label>
+          <input id="c-value" type="text" inputMode="decimal" placeholder="div" value={valueDraft}
+            onChange={(e) => {
+              const s = e.target.value.replace(/[^\d.,]/g, '')
+              setValueDraft(s)
+              const n = Number(s.replace(',', '.'))
+              setValueDiv(n > 0 ? n : null)
+            }} />
+        </div>
+        <button className="btn" disabled={valueBusy} onClick={estimate}>{valueBusy ? t('craft.valueBusy') : t('craft.estimate')}</button>
         <button className="btn primary" disabled={busy || !selected.some(Boolean)} onClick={build}>{t('craft.build')}</button>
       </div>
+      {valueNote && <p className="muted small">{valueNote}</p>}
       {(busy || data?.loading) && <p className="note">{data?.loading ? t('craft.loadingData') : t('craft.building')}</p>}
       {data?.error && <p className="note warn">{t('craft.dataError', { err: data.error })}</p>}
       {error && <p className="note warn">{t('market.profileError', { err: error })}</p>}
@@ -106,6 +157,18 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
             </ul>
           </div>
           {plan.warnings.map((w, i) => <p key={i} className="note warn">{w}</p>)}
+          {plan.variants[0] && (() => {
+            const pr = profit(plan.variants[0])
+            if (!pr) return <p className="note">{t('craft.noValue')}</p>
+            if (pr.pMid < 0.3)
+              return (
+                <div className="buy-banner" role="alert">
+                  <b>{t('craft.buyTitle')}</b>
+                  <span>{t('craft.buyText', { m: Math.round(pr.pMid * 100), v: fmtCost(valueChaos!, divine) })}</span>
+                </div>
+              )
+            return null
+          })()}
           {plan.variants.length > 0 && (
             <div className="variants" role="radiogroup" aria-label={t('craft.variants')}>
               <div className="lbl">{t('craft.variants')}</div>
@@ -114,7 +177,16 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
                   onClick={() => { setVi(i); setDone(v.steps.map(() => false)) }}>
                   <span className="vname">{v.name}{i === 0 && <span className="best">{t('craft.recommended')}</span>}</span>
                   <span className="vchips">{v.mechanics.map((m) => <span key={m} className="mech">{m}</span>)}</span>
-                  <span className="mono vcost">{v.totalChaos ? `≈ ${fmtCost(v.totalChaos, plan.divine)}` : '—'}</span>
+                  <span className="mono vcost">{v.costMax ? `${fmtCost(v.costMin, plan.divine)}–${fmtCost(v.costMax, plan.divine)}` : '—'}</span>
+                  {(() => {
+                    const pr = profit(v)
+                    if (!pr) return null
+                    return (
+                      <span className={'vprofit mono ' + (pr.pMid >= 0.3 ? 'up' : pr.pMid >= 0 ? 'warnc' : 'down')}>
+                        profit ~{signed(pr.lo)}…{signed(pr.hi)} ({Math.round(pr.pLo * 100)}…{Math.round(pr.pHi * 100)}%)
+                      </span>
+                    )
+                  })()}
                 </button>
               ))}
             </div>

@@ -139,7 +139,7 @@ export function App() {
         )}
         {tab === 'market' && (
           <MarketTab t={t} lang={settings.lang} query={query} setQuery={setQuery} market={market} divine={divine}
-            onExample={(e: ExampleItem) => openCraft(e)} />
+            onExample={(e: ExampleItem) => openCraft({ ...e, valueDiv: e.valueDiv ?? (e.priceDiv || undefined) })} />
         )}
         {tab === 'settings' && (
           <SettingsTab

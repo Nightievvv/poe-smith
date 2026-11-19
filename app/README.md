@@ -39,6 +39,10 @@ npm run dist     # установщик .exe в dist/
    - Планировщик (`src/main/poe1/planner.ts`) строит до 5 вариантов. Основной метод: Essence, Chaos, Alteration+Regal, Harvest (реролл по тегу), Fossil (1–2 фоссилии + резонатор). Затем для каждого оставшегося мода — шаг доводки «по необходимости»: верстак (не больше одного крафтового мода), Exalted Orb + Annulment или мета-крафт «Prefix/Suffix Modifiers cannot be changed» + Scouring + Exalted.
    - Стоимость: эссенция — до «основной + один дополнительный», остальные методы — до основного мода; доводка умножается на вероятность, что мод ещё нужен.
    - Плюс имплиситы Searing Exarch / Eater of Worlds, порча Vaal, энчанты, качество и связи; цены — poe.ninja.
-   - Пока нет: влияний (Shaper/Elder и т. п.), Awakener's Orb, Recombinator, Beastcraft.
+   - Влияния (Shaper, Elder, Crusader, Redeemer, Hunter, Warlord): влиянный Exalted Orb + бист-крафт «Add a Mod to a … Item»; два влияния — Awakener's Orb.
+   - Рекомбинатор: два чистых магических предмета → редкий; вероятности по таблице сообщества, цены на poe.ninja нет.
+   - Бист-крафт: «Add a Prefix/Suffix, Remove a Random Suffix/Prefix», моды влияний; рецепты по таблице Bestiary на poedb (без даты), цены зверей — poe.ninja.
+   - Harvest: стоимость крафтов по таблице poedb.tw/us/Horticrafting (`src/main/poe1/harvest.ts`): реролл по тегу, «добавить мод и убрать случайный», смена типа сопротивления.
+   - Стоимость показывается диапазоном: расход на попытки 50–100% от расчётного. Прибыль: цена продажи (профиль, лот, прайс-чек или «Оценить на трейде») минус стоимость; маржа < 30% → плашка «Выгоднее купить».
    - Отладка без игры: `EXILE_FORGE_DEBUG=1` открывает `window.debug.item(text, 'read' | 'price')`.
 4. Модуль PoE 2.

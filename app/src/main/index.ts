@@ -4,7 +4,7 @@ import { loadSettings, writeSettings, hasSession, setSession, clearSession } fro
 import { fetchLeagues } from './leagues'
 import {
   HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type Lang, type MarketQuery, type OverlayEvent, type ParsedItem, type PcFilter,
-  type PriceCheckState, type Settings
+  type PriceCheckState, type Settings, type ValueEstimate
 } from '../shared/types'
 import { parseItem } from '../shared/poe1/item'
 import { copyItemText } from './poe1/copy'
@@ -249,6 +249,18 @@ if (process.env.EXILE_FORGE_DEBUG) {
 // крафт
 onCraftStatus((s) => send({ type: 'craftData', data: s }))
 ipcMain.handle('craft:status', () => craftStatus())
+// рыночная цена целевого предмета: медиана 10 самых дешёвых похожих лотов
+ipcMain.handle('craft:value', async (_e, item: ParsedItem): Promise<ValueEstimate> => {
+  try {
+    const st = await defaultFilters(item)
+    const r = await pcSearch(await currentLeague(), item, st.filters)
+    const vals = r.rows.slice(0, 10).map((x) => x.priceDiv).sort((a, b) => a - b)
+    const mid = vals.length ? (vals.length % 2 ? vals[(vals.length - 1) / 2] : (vals[vals.length / 2 - 1] + vals[vals.length / 2]) / 2) : 0
+    return { valueDiv: mid, count: vals.length, total: r.total, tradeUrl: r.tradeUrl }
+  } finally {
+    sendLimits()
+  }
+})
 ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lang: Lang) => buildPlan(item, targets, lang, await currentLeague()))
 ipcMain.on('craft:open', (_e, item: ParsedItem) => {
   if (win && !win.isVisible()) win.showInactive()

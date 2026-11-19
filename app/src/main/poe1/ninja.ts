@@ -37,6 +37,17 @@ export async function getPriceBook(league: string): Promise<Map<string, number>>
       /* без цен этого типа план всё равно строится */
     }
   }
+  // звери для бист-крафта продаются не на бирже — берём из обзора лотов poe.ninja
+  try {
+    const url = `https://poe.ninja/poe1/api/economy/stash/current/item/overview?league=${encodeURIComponent(league)}&type=Beast`
+    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' } })
+    if (res.ok) {
+      const j = (await res.json()) as { lines: { name: string; chaosValue: number }[] }
+      for (const l of j.lines) if (l.chaosValue > 0 && !byName.has(l.name)) byName.set(l.name, l.chaosValue)
+    }
+  } catch {
+    /* без зверей план строится без бист-крафта */
+  }
   books.set(league, { at: Date.now(), byName })
   return byName
 }
