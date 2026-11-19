@@ -3,6 +3,10 @@
  * Источник: https://poedb.tw/us/Horticrafting (снимок от 20.11.2026; дата таблицы на странице не указана).
  * Rancour — Crystallised Rancour, отдельная валюта.
  */
+import { app } from 'electron'
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
+
 export type Lifeforce = 'Wild' | 'Vivid' | 'Primal' | 'Sacred'
 export interface HarvestCost {
   parts: { lf: Lifeforce; n: number }[]
@@ -47,3 +51,37 @@ export const HARVEST_AUGMENT: Record<string, { label: string; cost: HarvestCost 
 export const RES_LIFEFORCE: Record<'Fire' | 'Cold' | 'Lightning', Lifeforce> = { Fire: 'Wild', Cold: 'Primal', Lightning: 'Vivid' }
 
 export const lifeforceName = (lf: Lifeforce) => `${lf} Crystallised Lifeforce`
+
+export interface HarvestTables {
+  /** откуда цифры — показывается в плане */
+  source: string
+  reforge: Record<string, { label: string; cost: HarvestCost }>
+  augment: Record<string, { label: string; cost: HarvestCost }>
+  /** лайфорса каждого из двух цветов на смену типа сопротивления */
+  resChange: number
+}
+
+const DEFAULTS: HarvestTables = {
+  source: 'poedb.tw/us/Horticrafting, 20.11.2026',
+  reforge: HARVEST_REFORGE,
+  augment: HARVEST_AUGMENT,
+  resChange: 300
+}
+
+/** Файл с таблицей, который можно править руками, если GGG поменяет стоимость. */
+export const harvestFile = () => join(app.getPath('userData'), 'harvest-costs.json')
+
+export function loadHarvest(): HarvestTables {
+  const f = harvestFile()
+  try {
+    if (!existsSync(f)) writeFileSync(f, JSON.stringify(DEFAULTS, null, 2), 'utf-8')
+    const raw = JSON.parse(readFileSync(f, 'utf-8')) as Partial<HarvestTables>
+    return { ...DEFAULTS, ...raw, reforge: { ...DEFAULTS.reforge, ...(raw.reforge ?? {}) }, augment: { ...DEFAULTS.augment, ...(raw.augment ?? {}) } }
+  } catch {
+    return DEFAULTS
+  }
+}
+
+export function resetHarvest() {
+  writeFileSync(harvestFile(), JSON.stringify(DEFAULTS, null, 2), 'utf-8')
+}

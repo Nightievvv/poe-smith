@@ -31,6 +31,10 @@ export interface Settings {
   maxAgeDays: 3 | 7 | 14
   /** нижняя граница цены на вкладке «Рынок» */
   marketMin: { value: number; currency: 'chaos' | 'divine' }
+  /** свои цены в Chaos для валюты, которой нет на poe.ninja (рекомбинаторы, редкие звери…) */
+  customPrices: Record<string, number>
+  /** показывать оверлей только когда активна игра (или само окно оверлея) */
+  onlyWhenGameFocused: boolean
   window: { x?: number; y?: number; width?: number; height?: number }
 }
 
@@ -274,6 +278,8 @@ export interface CraftPlan {
   variants: CraftVariant[]
   divine: number | null
   warnings: string[]
+  /** валюта без цены — её можно указать вручную (Settings.customPrices) */
+  missingPrices: string[]
 }
 
 export interface CraftDataStatus {
@@ -321,6 +327,9 @@ export interface Api {
   /** план крафта: targets — индексы модов item.mods, которые нужно получить */
   craftPlan(item: ParsedItem, targets: number[], lang: Lang): Promise<CraftPlan>
   craftDataStatus(): Promise<CraftDataStatus>
+  /** открыть JSON с таблицей стоимостей Harvest / вернуть значения по умолчанию */
+  openHarvestFile(): Promise<void>
+  resetHarvestFile(): Promise<void>
   /** рыночная цена предмета: медиана 10 самых дешёвых похожих лотов (1 поиск на трейде) */
   estimateValue(item: ParsedItem): Promise<ValueEstimate>
   /** открыть предмет во вкладке «Крафт» основного окна */

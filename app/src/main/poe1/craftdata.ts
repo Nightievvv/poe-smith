@@ -24,6 +24,8 @@ export interface Mod {
   gen: string
   domain: string
   type: string
+  /** группы модов: на предмете не бывает двух модов одной группы */
+  groups: string[]
   text: string
   reqLevel: number
   weights: { tag: string; weight: number }[]
@@ -126,7 +128,7 @@ function build(version: string): CraftData {
     if (!KEEP_GEN.has(m.generation_type) && m.domain !== 'crafted') continue
     if (!KEEP_DOMAIN.has(m.domain) || !m.text) continue
     mods.set(id, {
-      id, name: m.name ?? '', gen: m.generation_type, domain: m.domain, type: m.type, text: m.text, reqLevel: m.required_level ?? 1,
+      id, name: m.name ?? '', gen: m.generation_type, domain: m.domain, type: m.type, groups: m.groups ?? [m.type], text: m.text, reqLevel: m.required_level ?? 1,
       weights: m.spawn_weights ?? [], tags: m.implicit_tags ?? [],
       lines: String(m.text).split('\n').map(compileLine)
     })
@@ -136,7 +138,7 @@ function build(version: string): CraftData {
     for (const iid of b.implicits) {
       const m = rawMods[iid]
       if (m?.text && !mods.has(iid))
-        mods.set(iid, { id: iid, name: '', gen: 'base_implicit', domain: m.domain, type: m.type, text: m.text, reqLevel: m.required_level ?? 1, weights: [], tags: [], lines: String(m.text).split('\n').map(compileLine) })
+        mods.set(iid, { id: iid, name: '', gen: 'base_implicit', domain: m.domain, type: m.type, groups: m.groups ?? [], text: m.text, reqLevel: m.required_level ?? 1, weights: [], tags: [], lines: String(m.text).split('\n').map(compileLine) })
     }
   const rawEss = read('essences.min.json') as Record<string, any>
   const essences: Essence[] = Object.entries(rawEss)

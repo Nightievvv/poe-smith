@@ -135,7 +135,8 @@ export function App() {
       <div className="ov-body">
         {tab === 'craft' && (
           <CraftTab t={t} lang={settings.lang} item={item} readFailed={readFailed} readKey={settings.hotkeys.read || '—'}
-            onClose={() => setItem(null)} stepSignal={stepSignal} />
+            onClose={() => setItem(null)} stepSignal={stepSignal}
+            customPrices={settings.customPrices} saveCustomPrices={(customPrices) => save({ customPrices })} />
         )}
         {tab === 'market' && (
           <MarketTab t={t} lang={settings.lang} query={query} setQuery={setQuery} market={market} divine={divine}

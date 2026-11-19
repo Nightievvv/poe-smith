@@ -141,6 +141,35 @@ export function SettingsTab({ settings, t, failed, save, onRecording }: Props) {
         onChange={(e) => save({ clickThrough: e.target.checked })}
       />
 
+      <label htmlFor="s-focus">
+        {t('set.onlyFocused')}
+        <span className="sub">{t('set.onlyFocusedSub')}</span>
+      </label>
+      <input type="checkbox" className="switch" id="s-focus" checked={settings.onlyWhenGameFocused}
+        onChange={(e) => save({ onlyWhenGameFocused: e.target.checked })} />
+
+      <div className="h">{t('set.craft')}</div>
+      <span className="full small muted">{t('set.customPricesHint')}</span>
+      {Object.entries(settings.customPrices).map(([name, v]) => (
+        <div key={name} style={{ display: 'contents' }}>
+          <span className="small">{name}</span>
+          <span className="row">
+            <span className="mono small">{v}c</span>
+            <button className="ico" aria-label={t('set.remove')} title={t('set.remove')} onClick={() => {
+              const next = { ...settings.customPrices }
+              delete next[name]
+              save({ customPrices: next })
+            }}>✕</button>
+          </span>
+        </div>
+      ))}
+      {Object.keys(settings.customPrices).length === 0 && <span className="full small muted">{t('set.noCustomPrices')}</span>}
+      <span className="small">{t('set.harvestTable')}</span>
+      <span className="row">
+        <button className="btn" onClick={() => window.api.openHarvestFile()}>{t('set.open')}</button>
+        <button className="btn" onClick={() => window.api.resetHarvestFile()}>{t('set.reset')}</button>
+      </span>
+
       <div className="h">{t('set.account')}</div>
       <label htmlFor="s-sess" className="full">
         {t('set.sess')}

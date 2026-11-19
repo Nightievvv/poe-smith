@@ -10,10 +10,13 @@ import { parseItem } from '../shared/poe1/item'
 import { copyItemText } from './poe1/copy'
 import { defaultFilters, pcSearch } from './poe1/pricecheck'
 import { buildPlan } from './poe1/planner'
+import { basePrice } from './poe1/baseprice'
+import { harvestFile, resetHarvest } from './poe1/harvest'
 import { craftStatus, onCraftStatus } from './poe1/craftdata'
 import { getCached, scan } from './poe1/market'
 import { getRates } from './poe1/ninja'
 import { limits } from './poe1/trade'
+import { foregroundTitle, isGameTitle } from './poe1/focus'
 
 let win: BrowserWindow | null = null
 let settings: Settings
@@ -24,16 +27,37 @@ function send(e: OverlayEvent) {
   win?.webContents.send('overlay:event', e)
 }
 
+/** что хочет пользователь (горячая клавиша / крестик); фактический показ ещё зависит от активного окна */
+let userVisible = true
+let pcVisible = false
+
 function showOverlay() {
   if (!win) return
+  userVisible = true
   win.show()
   win.focus()
 }
 
 function toggleOverlay() {
   if (!win) return
-  if (win.isVisible()) win.hide()
-  else showOverlay()
+  if (win.isVisible()) {
+    userVisible = false
+    win.hide()
+  } else showOverlay()
+}
+
+/** «Показывать только когда игра активна»: прячем окна, когда активно что-то кроме игры и самого оверлея. */
+function watchFocus() {
+  setInterval(() => {
+    if (!settings.onlyWhenGameFocused || !win) return
+    const ours = win.isFocused() || !!pcWin?.isFocused()
+    const game = ours || isGameTitle(foregroundTitle())
+    for (const [w, wanted] of [[win, userVisible], [pcWin, pcVisible]] as const) {
+      if (!w || w.isDestroyed()) continue
+      if (wanted && game && !w.isVisible()) w.showInactive()
+      else if ((!wanted || !game) && w.isVisible()) w.hide()
+    }
+  }, 400)
 }
 
 function applyClickThrough() {
@@ -68,6 +92,7 @@ function showPriceCheck() {
   const x = main ? Math.max(workArea.x, main.x - width - 8) : workArea.x + 24
   const y = main?.y ?? workArea.y + 40
   const height = main?.height ?? 720
+  pcVisible = true
   if (!pcWin || pcWin.isDestroyed()) {
     pcWin = new BrowserWindow({
       x, y, width, height, minWidth: 340, minHeight: 300, frame: false, transparent: true, backgroundColor: '#00000000',
@@ -95,6 +120,7 @@ async function readItem(mode: 'read' | 'price') {
   const text = focused ? null : await copyItemText()
   const item = text ? parseItem(text) : null
   if (mode === 'read' || !item) {
+    userVisible = true
     if (win && !win.isVisible()) win.showInactive() // не забираем фокус у игры
     send({ type: 'item', item, mode: 'read' })
     send({ type: 'hotkey', id: 'read' })
@@ -195,7 +221,10 @@ ipcMain.handle('hotkeys:suspend', (_e, suspend: boolean) => {
   if (suspend) globalShortcut.unregisterAll()
   else registerHotkeys()
 })
-ipcMain.on('overlay:hide', () => win?.hide())
+ipcMain.on('overlay:hide', () => {
+  userVisible = false
+  win?.hide()
+})
 
 // Рынок: трейд опрашивается только по явной команде пользователя («Найти» / «Загрузить ещё»)
 ipcMain.handle('market:get', async (_e, q: MarketQuery) => getCached(await currentLeague(), q))
@@ -230,7 +259,10 @@ ipcMain.handle('pc:search', async (_e, item: ParsedItem, filters: PcFilter[]) =>
     sendLimits()
   }
 })
-ipcMain.on('pc:close', () => pcWin?.hide())
+ipcMain.on('pc:close', () => {
+  pcVisible = false
+  pcWin?.hide()
+})
 
 // отладка без игры: прайс-чек и крафт по тексту предмета (только с переменной окружения EXILE_FORGE_DEBUG)
 if (process.env.EXILE_FORGE_DEBUG) {
@@ -261,8 +293,22 @@ ipcMain.handle('craft:value', async (_e, item: ParsedItem): Promise<ValueEstimat
     sendLimits()
   }
 })
-ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lang: Lang) => buildPlan(item, targets, lang, await currentLeague()))
+ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lang: Lang) => {
+  const league = await currentLeague()
+  try {
+    return await buildPlan(item, targets, lang, league, {
+      customPrices: settings.customPrices,
+      basePrice: (baseType, lvl) => basePrice(league, baseType, lvl)
+    })
+  } finally {
+    sendLimits()
+  }
+})
+// таблица стоимостей Harvest — обычный JSON-файл, его можно открыть и поправить
+ipcMain.handle('harvest:open', () => shell.openPath(harvestFile()))
+ipcMain.handle('harvest:reset', () => resetHarvest())
 ipcMain.on('craft:open', (_e, item: ParsedItem) => {
+  userVisible = true
   if (win && !win.isVisible()) win.showInactive()
   send({ type: 'openCraft', item })
 })
@@ -271,6 +317,7 @@ app.on('second-instance', showOverlay)
 app.whenReady().then(() => {
   settings = loadSettings()
   createWindow()
+  watchFocus()
   registerHotkeys()
 })
 app.on('will-quit', () => globalShortcut.unregisterAll())

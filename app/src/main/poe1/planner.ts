@@ -1,7 +1,8 @@
 import type { CraftCost, CraftPlan, CraftStep, CraftTarget, CraftVariant, Lang, ParsedItem } from '../../shared/types'
 import { loadCraftData, matchMod, matchModText, weightFor, type Base, type BenchCraft, type Fossil, type Mod } from './craftdata'
 import { getPriceBook } from './ninja'
-import { HARVEST_AUGMENT, HARVEST_REFORGE, RES_LIFEFORCE, lifeforceName, type HarvestCost } from './harvest'
+import { RES_LIFEFORCE, lifeforceName, loadHarvest, type HarvestCost } from './harvest'
+import { JEWEL_COUNTS, MAGIC_COUNTS, RARE_COUNTS, prob, simulate, type SimMod, type SimTarget } from './sim'
 
 /** Влияния: суффикс тега в данных игры → название влияния и зверь для «Add a Mod to a … Item». */
 const INFLUENCES: { tag: string; name: string; beast: string }[] = [
@@ -62,10 +63,18 @@ function domainOk(mod: Mod, base: Base) {
   return false
 }
 
-export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lang, league: string): Promise<CraftPlan> {
+export interface PlanOptions {
+  /** свои цены (Chaos) для валюты, которой нет на poe.ninja; перекрывают цены poe.ninja */
+  customPrices?: Record<string, number>
+  /** цена белой базы нужного уровня (трейд) */
+  basePrice?: (baseType: string, ilvl: number) => Promise<{ chaos: number; count: number } | null>
+}
+
+export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lang, league: string, opts: PlanOptions = {}): Promise<CraftPlan> {
   const T = (ru: string, en: string) => (lang === 'ru' ? ru : en)
   const d = await loadCraftData()
-  const prices = await getPriceBook(league).catch(() => new Map<string, number>())
+  const prices = new Map(await getPriceBook(league).catch(() => new Map<string, number>()))
+  for (const [k, v] of Object.entries(opts.customPrices ?? {})) if (v > 0) prices.set(k, v)
   const divine = prices.get('Divine Orb') ?? null
   const warnings: string[] = []
   const missingPrice = new Set<string>()
@@ -107,7 +116,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     variants.find((b) => b.implicits.length && b.implicits.every((id) => { const bm = d.mods.get(id); return bm && implicitTexts.some((t) => matchModText(bm, t)) })) ??
     variants[0]
   if (!base) {
-    return { stage: '', ilvl: item.itemLevel ?? 0, targets: [], variants: [], divine,
+    return { stage: '', ilvl: item.itemLevel ?? 0, targets: [], variants: [], divine, missingPrices: [],
       warnings: [T(`База «${item.baseType}» не найдена в данных игры.`, `Base "${item.baseType}" not found in game data.`)] }
   }
   const tags = base.tags
@@ -218,11 +227,34 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   const pOn = (r: Resolved, picks: number, fs: Fossil[] = []) => 1 - Math.pow(1 - share(r, fs), picks)
   const names = (rs: Resolved[]) => rs.map((r) => `«${r.text}»`).join(', ')
 
+  // ---------- симуляция роллов (Монте-Карло): группы модов, лимит сторон, число модов ----------
+  const isJewel = /Jewel/.test(base.itemClass)
+  const rareCounts = isJewel ? JEWEL_COUNTS : RARE_COUNTS
+  const maxSide = isJewel ? 2 : 3
+  const toSim = (x: Mod, w: number): SimMod => ({ type: x.type, gen: x.gen as Side, reqLevel: x.reqLevel, groups: x.groups, w })
+  const simPool = (fs: Fossil[] = []) => rollable.map((x) => toSim(x, weightFor(x, tags) * mult(x, fs))).filter((m) => m.w > 0)
+  const simTargets: SimTarget[] = explicit.map((r) => ({ type: r.mod!.type, gen: r.mod!.gen as Side, reqLevel: r.mod!.reqLevel }))
+  const bit = (r: Resolved) => (explicit.includes(r) ? 1 << explicit.indexOf(r) : 0)
+  const bits = (rs: Resolved[]) => rs.reduce((a, r) => a | bit(r), 0)
+  const sim = (o: { fs?: Fossil[]; forced?: Mod[]; forcedFrom?: Mod[]; magic?: boolean }) =>
+    simulate(simPool(o.fs), simTargets, {
+      counts: o.magic ? MAGIC_COUNTS : rareCounts,
+      maxSide: o.magic ? 1 : maxSide,
+      forced: o.forced?.map((m) => toSim(m, 1)),
+      forcedFrom: o.forcedFrom?.map((m) => toSim(m, weightFor(m, tags))).filter((m) => m.w > 0)
+    })
+  /** P(мод r есть | условие cond выполнено) */
+  const cond = (masks: Uint32Array, r: Resolved, all: number, any = 0) => {
+    const base = prob(masks, all, any)
+    return base > 0 ? Math.min(1, prob(masks, all | bit(r), any) / base) : 0
+  }
+
   // самый трудный мод — основной для негарантированных методов
   const hardest = [...explicit].sort((a, b) => share(a) - share(b))[0]
   const HORTI = T('Horticrafting Station в убежище', 'Hideout Horticrafting Station')
   const BEAST_SRC = T('Рецепт сверен с poewiki.net/wiki/Beastcrafting (версия 3.30).', 'Recipe checked against poewiki.net/wiki/Beastcrafting (3.30).')
-  const HARVEST_SRC =T('Стоимость Harvest — по таблице poedb.tw/us/Horticrafting (дата таблицы на сайте не указана).', 'Harvest costs from poedb.tw/us/Horticrafting (table date not stated).')
+  const H = loadHarvest()
+  const HARVEST_SRC = T(`Стоимость Harvest — из таблицы ${H.source} (её можно поправить в Настройках).`, `Harvest costs from ${H.source} (editable in Settings).`)
 
   // моды влияния: шанс среди всех модов этого влияния (влиянные Exalted и зверь добавляют мод любой стороны)
   const infShare = (r: Resolved) => {
@@ -244,11 +276,12 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
 
     // Currency: Chaos Orb
     {
-      const p = pOn(hardest, 2)
+      const masks = sim({})
+      const p = Math.max(1e-6, prob(masks, bit(hardest)))
       const cs = [cost('Orb of Alchemy', 1), costA('Chaos Orb', 1 / p)]
       primaries.push({
         key: 'chaos', name: 'Chaos Orb', mechanics: ['Currency'], main: hardest, chaos: sum(cs), notes: [],
-        already: (r) => (r === hardest ? 1 : pOn(r, 2)),
+        already: (r) => (r === hardest ? 1 : cond(masks, r, bit(hardest))),
         steps: [{ kind: 'explicit', title: T(`Chaos Orb до «${hardest.text}»`, `Chaos Orb until "${hardest.text}"`),
           detail: [T(`Шанс за попытку ≈ ${pct(p)}. Начните с редкой базы (Orb of Alchemy).`, `≈ ${pct(p)} per try. Start from a rare base (Orb of Alchemy).`), extrasNote(hardest)].filter(Boolean).join(' '),
           currency: cs, station: INV, farm: farm('Chaos Orb') }]
@@ -257,7 +290,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
 
     // Currency: Alteration (магический предмет) + Regal
     {
-      const pa = 0.5 * share(hardest)
+      const pa = Math.max(1e-6, prob(sim({ magic: true }), bit(hardest)))
       const second = explicit.filter((x) => x.mod!.gen !== hardest.mod!.gen).sort((a, b) => share(a) - share(b))[0]
       const cs = [cost('Orb of Transmutation', 1), costA('Orb of Alteration', 1 / pa)]
       const steps: CraftStep[] = [
@@ -285,11 +318,13 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
         .sort((a, b) => (prices.get(a.name) ?? 1e9) - (prices.get(b.name) ?? 1e9) || a.level - b.level)[0]
       if (!ess) continue
       const rest = others(main)
-      const pAdd = rest.length ? 1 - rest.reduce((a, o) => a * (1 - pOn(o, o.mod!.gen === main.mod!.gen ? 1.2 : 1.8)), 1) : 1
-      const cs = [costA(ess.name, 1 / Math.max(1e-9, pAdd))]
+      const masks = sim({ forced: [d.mods.get(ess.mods[base.itemClass])!] })
+      const anyRest = bits(rest)
+      const pAdd = rest.length ? Math.max(1e-6, prob(masks, 0, anyRest)) : 1
+      const cs = [costA(ess.name, 1 / pAdd)]
       primaries.push({
         key: 'ess-' + ess.name, name: T(`Эссенция: ${ess.name}`, `Essence: ${ess.name}`), mechanics: ['Essence'], main, chaos: sum(cs), notes: [],
-        already: (r) => (r === main ? 1 : Math.min(1, pOn(r, r.mod!.gen === main.mod!.gen ? 1.2 : 1.8) / pAdd)),
+        already: (r) => (r === main ? 1 : rest.length ? cond(masks, r, 0, anyRest) : 0),
         steps: [{ kind: 'explicit',
           title: rest.length
             ? T(`Катать ${ess.name}: «${main.text}» гарантирован, ждём ещё 1–2 из: ${names(rest)}`, `Spam ${ess.name}: "${main.text}" is guaranteed, wait for 1–2 of: ${names(rest)}`)
@@ -304,7 +339,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
 
     // Harvest: реролл с гарантированным модом тега; тег выбираем самый выгодный по таблице стоимостей
     if (base.domain !== 'flask') {
-      const opts = Object.entries(HARVEST_REFORGE)
+      const opts = Object.entries(H.reforge)
         .filter(([tag]) => hardest.mod!.tags.includes(tag))
         .map(([tag, h]) => {
           const tagW = rollable.filter((x) => x.tags.includes(tag)).reduce((a, x) => a + weightFor(x, tags), 0)
@@ -314,13 +349,19 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
         })
         .sort((a, b) => a.chaos - b.chaos)
       const best = opts[0]
+      // уточняем шанс симуляцией: один мод гарантированно из модов тега, остальные случайны
+      let masks: Uint32Array | null = null
+      if (best) {
+        masks = sim({ forcedFrom: rollable.filter((x) => x.tags.includes(best.tag)) })
+        best.p = Math.max(1e-6, prob(masks, bit(hardest)))
+      }
       if (best) {
         const cs = harvestCosts(best.h.cost, 1 / best.p)
         const lfText = best.h.cost.parts.map((x) => `${x.n} ${x.lf}`).join(' + ') + (best.h.cost.rancour ? ` + ${best.h.cost.rancour} Rancour` : '')
         primaries.push({
           key: 'harvest', name: T(`Harvest: реролл с модом ${best.h.label}`, `Harvest: reforge with a ${best.h.label} modifier`), mechanics: ['Harvest'], main: hardest, chaos: sum(cs),
           notes: [HARVEST_SRC],
-          already: (r) => (r === hardest ? 1 : pOn(r, 2)),
+          already: (r) => (r === hardest ? 1 : cond(masks!, r, bit(hardest))),
           steps: [{ kind: 'explicit', title: T(`Harvest «Reforge a Rare item … including a ${best.h.label} modifier» до «${hardest.text}»`, `Harvest "Reforge a Rare item … including a ${best.h.label} modifier" until "${hardest.text}"`),
             detail: [T(`Один реролл: ${lfText} лайфорса. Гарантирует мод ${best.h.label}; нужный среди них ≈ ${pct(best.pTag)}.`, `One reforge: ${lfText} lifeforce. Guarantees a ${best.h.label} mod; the wanted one ≈ ${pct(best.pTag)}.`), extrasNote(hardest)].filter(Boolean).join(' '),
             currency: cs, station: HORTI, farm: farm('Lifeforce') }]
@@ -340,12 +381,15 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
         return { fs, p, chaos: per / Math.max(1e-9, p) }
       }).sort((a, b) => a.chaos - b.chaos)[0]
       if (best) {
+        // лучшую комбинацию уточняем симуляцией с изменёнными весами
+        const masks = sim({ fs: best.fs })
+        best.p = Math.max(1e-6, prob(masks, bit(hardest)))
         const tries = 1 / best.p
         const cs = [...best.fs.map((f) => costA(f.name, tries)), costA(RESONATORS[best.fs.length - 1], tries)]
         const label = best.fs.map((f) => f.name).join(' + ')
         primaries.push({
           key: 'fossil', name: T(`Фоссилии: ${label}`, `Fossils: ${label}`), mechanics: ['Fossil'], main: hardest, chaos: sum(cs), notes: [],
-          already: (r) => (r === hardest ? 1 : pOn(r, 2, best.fs)),
+          already: (r) => (r === hardest ? 1 : cond(masks, r, bit(hardest))),
           steps: [{ kind: 'explicit', title: T(`${RESONATORS[best.fs.length - 1]} + ${label} до «${hardest.text}»`, `${RESONATORS[best.fs.length - 1]} + ${label} until "${hardest.text}"`),
             detail: [T(`Шанс за попытку ≈ ${pct(best.p)} (без фоссилий ≈ ${pct(pOn(hardest, 2))}).`, `≈ ${pct(best.p)} per try (without fossils ≈ ${pct(pOn(hardest, 2))}).`), extrasNote(hardest)].filter(Boolean).join(' '),
             currency: cs, station: INV, farm: farm('Fossil') }]
@@ -485,7 +529,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     if (res) {
       const pAny = Math.min(1, 3 * p)
       const target = res[1] as 'Fire' | 'Cold' | 'Lightning'
-      const conv: HarvestCost = { parts: [{ lf: RES_LIFEFORCE[target], n: 300 }, { lf: 'Wild', n: 300 }] }
+      const conv: HarvestCost = { parts: [{ lf: RES_LIFEFORCE[target], n: H.resChange }, { lf: 'Wild', n: H.resChange }] }
       const cs = [costA('Exalted Orb', 1 / pAny), costA('Orb of Annulment', (1 / pAny - 1) / keepAny), ...harvestCosts(conv, 2 / 3)]
       out.push({ chaos: sum(cs), mechanics: ['Currency', 'Harvest'], usesCraft: false,
         steps: [{ kind: 'explicit', optional: true, title: title(T(`Exalted Orb на любое сопротивление того же тира → Harvest: сменить на ${target}`, `Exalted Orb for any resistance of that tier → Harvest: change it to ${target}`)),
@@ -495,7 +539,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     }
     // Harvest: добавить мод с тегом и убрать случайный (только без влияния)
     if (!influenced.length) {
-      const aug = Object.entries(HARVEST_AUGMENT)
+      const aug = Object.entries(H.augment)
         .filter(([tag]) => r.mod!.tags.includes(tag))
         .map(([tag, h]) => {
           const tagW = rollable.filter((x) => x.tags.includes(tag)).reduce((a, x) => a + weightFor(x, tags), 0)
@@ -572,13 +616,29 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   }
 
   // ---------- общий хвост: база, fractured, крафт с предмета, имплиситы, финиш ----------
+  // цена белой базы нужного уровня с трейда (медиана 5 самых дешёвых)
+  let bp: { chaos: number; count: number } | null = null
+  let bpError = false
+  if (opts.basePrice) {
+    try {
+      bp = await opts.basePrice(base.name, need)
+    } catch {
+      bpError = true
+    }
+  }
+  const baseCost: CraftCost[] = bp ? [{ name: T(`${base.name}, ilvl ${need}+ (трейд)`, `${base.name}, ilvl ${need}+ (trade)`), count: '×1', chaos: bp.chaos }] : []
   const head: CraftStep[] = [{
     kind: 'base',
     title: T(`База: ${base.name}, ilvl ${need}+`, `Base: ${base.name}, ilvl ${need}+`),
-    detail: fractured.length
-      ? T(`Нужна база с fractured-модом ${names(fractured)} — ищите на трейде или используйте Fracturing Orb.`, `You need a base with fractured ${names(fractured)}: buy one or use a Fracturing Orb.`)
-      : T('Белая база нужного уровня: чем выше ilvl, тем больше доступно высоких тиров. Стоимость базы в расчёт не входит.', 'A white base of the required level: higher ilvl unlocks higher tiers. Base price is not included.'),
-    currency: fractured.length ? [cost('Fracturing Orb', 1)] : [],
+    detail: [
+      fractured.length
+        ? T(`Нужна база с fractured-модом ${names(fractured)} — ищите на трейде или используйте Fracturing Orb.`, `You need a base with fractured ${names(fractured)}: buy one or use a Fracturing Orb.`)
+        : T('Белая база нужного уровня: чем выше ilvl, тем больше доступно высоких тиров.', 'A white base of the required level: higher ilvl unlocks higher tiers.'),
+      bp ? T(`Цена — медиана ${bp.count} самых дешёвых белых баз на трейде.`, `Price: median of the ${bp.count} cheapest white bases on trade.`)
+        : bpError ? T('Цену базы получить не удалось (трейд недоступен) — она не входит в итог.', 'Could not get the base price (trade unavailable); it is not included.')
+          : T('Белых баз этого уровня на трейде нет — цена не входит в итог.', 'No white bases of this level on trade; price not included.')
+    ].join(' '),
+    currency: [...baseCost, ...(fractured.length ? [cost('Fracturing Orb', 1)] : [])],
     station: T('Трейд или дроп', 'Trade or drops'), farm: stage
   }]
   const tail: CraftStep[] = []
@@ -703,5 +763,5 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     .map(({ key: _k, ...v }) => v)
 
   if (missingPrice.size) warnings.push(T(`Нет цены на poe.ninja: ${[...missingPrice].join(', ')} — итог по ним занижен.`, `No poe.ninja price for: ${[...missingPrice].join(', ')}; totals are understated.`))
-  return { stage, ilvl: need, targets, variants: variantsOut, divine, warnings }
+  return { stage, ilvl: need, targets, variants: variantsOut, divine, warnings, missingPrices: [...missingPrice] }
 }

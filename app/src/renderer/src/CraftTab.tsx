@@ -16,9 +16,12 @@ interface Props {
   onClose: () => void
   /** растёт при нажатии горячей клавиши «Отметить следующий шаг» */
   stepSignal: number
+  customPrices: Record<string, number>
+  saveCustomPrices: (p: Record<string, number>) => Promise<void>
 }
 
-export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSignal }: Props) {
+export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSignal, customPrices, saveCustomPrices }: Props) {
+  const [priceDraft, setPriceDraft] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<boolean[]>([])
   const [plan, setPlan] = useState<CraftPlan | null>(null)
   const [vi, setVi] = useState(0)
@@ -156,7 +159,27 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
               ))}
             </ul>
           </div>
-          {plan.warnings.map((w, i) => <p key={i} className="note warn">{w}</p>)}
+          {plan.warnings.filter((w) => !plan.missingPrices.some((m) => w.includes(m))).map((w, i) => <p key={i} className="note warn">{w}</p>)}
+          {plan.missingPrices.length > 0 && (
+            <div className="missing">
+              <div className="small">{t('craft.missingPrices')}</div>
+              {plan.missingPrices.map((n) => (
+                <div key={n} className="row">
+                  <label className="small" htmlFor={'mp-' + n}>{n}</label>
+                  <input id={'mp-' + n} className="num" type="text" inputMode="decimal" placeholder="c"
+                    value={priceDraft[n] ?? (customPrices[n] ? String(customPrices[n]) : '')}
+                    onChange={(e) => setPriceDraft({ ...priceDraft, [n]: e.target.value.replace(/[^\d.,]/g, '') })} />
+                </div>
+              ))}
+              <button className="btn" onClick={async () => {
+                const next = { ...customPrices }
+                for (const [k, v] of Object.entries(priceDraft)) { const x = Number(v.replace(',', '.')); if (x > 0) next[k] = x; else delete next[k] }
+                await saveCustomPrices(next)
+                setPriceDraft({})
+                build()
+              }}>{t('craft.savePrices')}</button>
+            </div>
+          )}
           {plan.variants[0] && (() => {
             const pr = profit(plan.variants[0])
             if (!pr) return <p className="note">{t('craft.noValue')}</p>

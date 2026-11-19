@@ -26,6 +26,8 @@ export function defaultSettings(): Settings {
     outlier: 'iqr1.5',
     maxAgeDays: 7,
     marketMin: { value: 0, currency: 'divine' },
+    customPrices: {},
+    onlyWhenGameFocused: false,
     window: {}
   }
 }
@@ -39,6 +41,7 @@ export function loadSettings(): Settings {
       ...def,
       ...raw,
       hotkeys: { ...def.hotkeys, ...(raw.hotkeys ?? {}) },
+      customPrices: { ...(raw.customPrices ?? {}) },
       window: { ...(raw.window ?? {}) }
     }
   } catch {
