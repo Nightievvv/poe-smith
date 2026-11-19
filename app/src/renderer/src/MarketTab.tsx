@@ -5,7 +5,7 @@ import type { T } from './i18n'
 import { SlotSelect } from './SlotSelect'
 import { PriceDetail } from './PriceDetail'
 import { Examples } from './Examples'
-import { fmtAgo, fmtPrice, fmtTotal } from './format'
+import { errText, fmtAgo, fmtPrice, fmtTotal } from './format'
 
 type Sort = 'score' | 'price' | 'total'
 
@@ -93,7 +93,7 @@ export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate
         {market?.scanning && market.progress
           ? t('market.scanning', market.progress)
           : market?.error
-            ? t('market.error', { err: market.error })
+            ? errText(t, market.error)
             : draftChanged
               ? t('market.pressFind')
               : market?.scannedAt
@@ -124,7 +124,7 @@ export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate
                   <tr key={r.id} className={selected?.r.id === r.id ? 'sel' : ''} onClick={() => setSel(r.id)}>
                     <td>
                       <div className="iname r-rare">{r.name[lang]}</div>
-                      {r.error && <div className="bad small">{r.error}</div>}
+                      {r.error && <div className="bad small">{errText(t, r.error)}</div>}
                     </td>
                     <td className="n">{fmtPrice(r.median, divine)}</td>
                     <td className="n">{fmtTotal(r.total)}</td>
@@ -137,6 +137,13 @@ export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate
               </tbody>
             </table>
           </div>
+          {selected && (
+            <button className="btn primary" disabled={!selected.r.craftItem}
+              title={selected.r.craftItem ? undefined : t('market.noCraftItem')}
+              onClick={() => selected.r.craftItem && onExample({ ...selected.r.craftItem, name: selected.r.name[lang], price: '', priceDiv: 0 })}>
+              {t('market.craftProfile', { name: selected.r.name[lang] })}
+            </button>
+          )}
           {market?.hasMore && !market.scanning && remaining > 0 && (
             <button className="btn" onClick={() => find(true)}>
               {t('market.more', { n: Math.min(5, remaining), left: remaining })}

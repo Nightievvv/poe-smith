@@ -54,6 +54,8 @@ async function readJson(res: Response) {
     /* не JSON */
   }
   if (!res.ok) {
+    // сервер трейда лежит или на обслуживании — интерфейс покажет понятное сообщение
+    if (res.status === 502 || res.status === 503 || res.status === 504) throw new Error('TRADE_UNAVAILABLE')
     const msg = j?.error?.message ?? `HTTP ${res.status}`
     throw new Error(res.status === 429 ? `rate limit: ${msg}` : msg)
   }

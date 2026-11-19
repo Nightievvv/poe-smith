@@ -20,6 +20,7 @@ interface Props {
 export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSignal }: Props) {
   const [selected, setSelected] = useState<boolean[]>([])
   const [plan, setPlan] = useState<CraftPlan | null>(null)
+  const [vi, setVi] = useState(0)
   const [done, setDone] = useState<boolean[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,7 +59,8 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
       const idx = selected.map((s, i) => (s ? i : -1)).filter((i) => i >= 0)
       const p = await window.api.craftPlan(item, idx, lang)
       setPlan(p)
-      setDone(p.steps.map(() => false))
+      setVi(0)
+      setDone((p.variants[0]?.steps ?? []).map(() => false))
     } catch (e) {
       setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e))
     } finally {
@@ -91,9 +93,7 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
           <div className="goal">
             <div className="chips">
               <span className="chip stage-c">{t('craft.stage')}: {plan.stage}</span>
-              <span className="chip">{plan.method}</span>
               <span className="chip">ilvl {plan.ilvl}+</span>
-              {plan.totalChaos != null && plan.totalChaos > 0 && <span className="chip mono">≈ {fmtCost(plan.totalChaos, plan.divine)}</span>}
             </div>
             <ul className="mods targets">
               {plan.targets.map((x, i) => (
@@ -106,12 +106,27 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
             </ul>
           </div>
           {plan.warnings.map((w, i) => <p key={i} className="note warn">{w}</p>)}
+          {plan.variants.length > 0 && (
+            <div className="variants" role="radiogroup" aria-label={t('craft.variants')}>
+              <div className="lbl">{t('craft.variants')}</div>
+              {plan.variants.map((v, i) => (
+                <button key={i} role="radio" aria-checked={vi === i} className={'variant' + (vi === i ? ' on' : '')}
+                  onClick={() => { setVi(i); setDone(v.steps.map(() => false)) }}>
+                  <span className="vname">{v.name}{i === 0 && <span className="best">{t('craft.recommended')}</span>}</span>
+                  <span className="vchips">{v.mechanics.map((m) => <span key={m} className="mech">{m}</span>)}</span>
+                  <span className="mono vcost">{v.totalChaos ? `≈ ${fmtCost(v.totalChaos, plan.divine)}` : '—'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {plan.variants[vi]?.notes.map((n, i) => <p key={i} className="note">{n}</p>)}
           <ol className="steps">
-            {plan.steps.map((s, i) => (
-              <li key={i} className={'step k-' + s.kind + (done[i] ? ' done' : '')}>
+            {(plan.variants[vi]?.steps ?? []).map((s, i) => (
+              <li key={i} className={'step k-' + s.kind + (s.optional ? ' optional' : '') + (done[i] ? ' done' : '')}>
                 <input type="checkbox" checked={!!done[i]} aria-label={s.title}
                   onChange={() => setDone((d) => d.map((v, j) => (j === i ? !v : v)))} />
                 <div>
+                  {s.optional && <span className="opt">{t('craft.optional')}</span>}
                   <h4>{i + 1}. {s.title}</h4>
                   {s.detail && <div className="muted small">{s.detail}</div>}
                   <dl className="meta">

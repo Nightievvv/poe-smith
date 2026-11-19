@@ -36,7 +36,9 @@ npm run dist     # установщик .exe в dist/
    - Предмет копируется в расширенном формате (Ctrl+Alt+C), поэтому из игры приходят тиры модов.
 3. Крафт — **готово (первая версия)**:
    - Данные игры: RePoE (`src/main/poe1/craftdata.ts`), ~27 МБ, кэш в `%APPDATA%/exile-forge/repoe`, обновляется при смене версии игры.
-   - Планировщик (`src/main/poe1/planner.ts`): эссенции, Alteration/Augmentation/Regal/Exalted, Chaos, верстак, имплиситы Searing Exarch / Eater of Worlds, порча Vaal, энчанты, качество и связи; цены — poe.ninja.
-   - Пока нет: фоссилий, Harvest, мета-крафта (Prefixes/Suffixes Cannot Be Changed), влияний (Shaper/Elder и т. п.).
+   - Планировщик (`src/main/poe1/planner.ts`) строит до 5 вариантов. Основной метод: Essence, Chaos, Alteration+Regal, Harvest (реролл по тегу), Fossil (1–2 фоссилии + резонатор). Затем для каждого оставшегося мода — шаг доводки «по необходимости»: верстак (не больше одного крафтового мода), Exalted Orb + Annulment или мета-крафт «Prefix/Suffix Modifiers cannot be changed» + Scouring + Exalted.
+   - Стоимость: эссенция — до «основной + один дополнительный», остальные методы — до основного мода; доводка умножается на вероятность, что мод ещё нужен.
+   - Плюс имплиситы Searing Exarch / Eater of Worlds, порча Vaal, энчанты, качество и связи; цены — poe.ninja.
+   - Пока нет: влияний (Shaper/Elder и т. п.), Awakener's Orb, Recombinator, Beastcraft.
    - Отладка без игры: `EXILE_FORGE_DEBUG=1` открывает `window.debug.item(text, 'read' | 'price')`.
 4. Модуль PoE 2.

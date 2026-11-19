@@ -1,11 +1,11 @@
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { ExampleItem, MarketQuery, ProfileResult, Settings, SlotId, SlotMarket } from '../../shared/types'
+import type { ExampleItem, MarketQuery, ParsedItem, ProfileResult, Settings, SlotId, SlotMarket } from '../../shared/types'
 import { listingToItem } from './listing'
 import { analyze, type PricePoint } from '../../shared/analyze'
 import { SLOT_CATEGORY, subtypeOf } from '../../shared/poe1/catalog'
-import { profilesFor, type Profile } from './profiles'
+import { profilesFor, profileTargetMods, type Profile } from './profiles'
 import { buildQuery, type QuerySpec } from './query'
 import { search, fetchListings, tradeUrl, type Listing } from './trade'
 import { getRates, type Rates } from './ninja'
@@ -24,7 +24,7 @@ interface Store {
   history: Record<string, { t: number; m: number }[]>
 }
 
-const VERSION = 2
+const VERSION = 3
 const file = () => join(app.getPath('userData'), 'market-cache.json')
 let store: Store = { v: VERSION, slots: {}, history: {} }
 try {
@@ -105,6 +105,23 @@ function specFor(p: Profile, q: MarketQuery, minChaos: number): QuerySpec {
   }
 }
 
+/** Целевой предмет для крафта по профилю: самая частая база среди лотов + моды по порогам (или моды типичного лота). */
+function craftItemFor(p: Profile, q: MarketQuery, examples: ExampleItem[], median: number): ParsedItem | undefined {
+  const st = subtypeOf(q.slot, q.subtype)
+  const counts = new Map<string, number>()
+  for (const e of examples) counts.set(e.baseType, (counts.get(e.baseType) ?? 0) + 1)
+  const baseType = p.type ?? st.type ?? [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+  if (!baseType) return undefined
+  const ilvl = Math.max(p.ilvl ?? 0, ...examples.map((e) => e.itemLevel ?? 0)) || 85
+  const texts = profileTargetMods(p)
+  const typical = [...examples].sort((a, b) => Math.abs(a.priceDiv - median) - Math.abs(b.priceDiv - median))[0]
+  const mods = texts
+    ? texts.map((text) => ({ text, kind: 'explicit' as const }))
+    : (typical?.mods ?? []).filter((m) => m.kind !== 'implicit' && m.kind !== 'enchant').map((m) => ({ ...m, kind: m.kind === 'crafted' ? ('crafted' as const) : m.kind }))
+  if (!mods.length) return undefined
+  return { itemClass: '', rarity: p.rarity === 'magic' ? 'Magic' : 'Rare', name: '', baseType, itemLevel: ilvl, slot: q.slot, mods, props: {}, corrupted: false }
+}
+
 /** Только кэш: без запросов к трейду. */
 export async function getCached(league: string, q: MarketQuery): Promise<SlotMarket> {
   const rates = await getRates(league).catch(() => null)
@@ -143,7 +160,7 @@ export async function scan(league: string, q: MarketQuery, more: boolean, settin
         const res = await runQuery(league, specFor(p, q, minChaos), settings, q.slot)
         const hk = `${league}|${p.id}|${minChaos}`
         const hist = (store.history[hk] ??= [])
-        r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, ...res, trend: trendFor(hist, res.median) }
+        r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, ...res, trend: trendFor(hist, res.median), craftItem: craftItemFor(p, q, res.examples, res.median) }
         if (res.median) hist.push({ t: Date.now(), m: res.median })
         store.history[hk] = hist.slice(-200)
       } catch (e) {

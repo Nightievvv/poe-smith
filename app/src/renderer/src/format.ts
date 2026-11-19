@@ -15,4 +15,11 @@ export function fmtAgo(t: T, ts: number): string {
   return t('ago.d', { n: Math.floor(m / 1440) })
 }
 
-export const fmtTotal = (n: number) => (n >= 10000 ? '10000+' : String(n))
+/** Текст ошибки из main-процесса → понятное сообщение. */
+export function errText(t: T, raw: string): string {
+  const msg = raw.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+  if (msg.includes('TRADE_UNAVAILABLE')) return t('err.tradeDown')
+  return t('market.profileError', { err: msg })
+}
+
+export const fmtTotal =(n: number) => (n >= 10000 ? '10000+' : String(n))

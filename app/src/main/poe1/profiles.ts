@@ -217,5 +217,44 @@ export const PROFILES: Profile[] = [
   ])
 ]
 
+/**
+ * Пороги профиля → конкретные моды для планировщика крафта.
+ * Сумма стихийных сопротивлений раскладывается на 1–3 сопротивления (не больше 45% на мод).
+ * null — профиль задан не модами (DPS, кластеры, флаконы): тогда цели берутся из типичного лота.
+ */
+export function profileTargetMods(p: Profile): string[] | null {
+  if (!p.stats?.length || p.stats.some((s) => s.id === STAT.clusterPassives)) return null
+  const out: string[] = []
+  for (const { id, min } of p.stats) {
+    const v = min ?? 1
+    if (id === STAT.eleRes) {
+      const n = Math.min(3, Math.ceil(v / 45))
+      const per = Math.ceil(v / n)
+      out.push(...['Fire', 'Cold', 'Lightning'].slice(0, n).map((e) => `+${per}% to ${e} Resistance`))
+    } else {
+      const tpl: Record<string, string> = {
+        [STAT.life]: `+${v} to maximum Life`,
+        [STAT.mana]: `+${v} to maximum Mana`,
+        [STAT.es]: `+${v} to maximum Energy Shield`,
+        [STAT.chaosRes]: `+${v}% to Chaos Resistance`,
+        [STAT.str]: `+${v} to Strength`,
+        [STAT.moveSpeed]: `${v}% increased Movement Speed`,
+        [STAT.attackSpeed]: `${v}% increased Attack Speed`,
+        [STAT.castSpeed]: `${v}% increased Cast Speed`,
+        [STAT.spellDamage]: `${v}% increased Spell Damage`,
+        [STAT.spellCrit]: `${v}% increased Critical Strike Chance for Spells`,
+        [STAT.suppress]: `+${v}% chance to Suppress Spell Damage`,
+        [STAT.allGems]: `+${v} to Level of all Skill Gems`,
+        [STAT.spellGems]: `+${v} to Level of all Spell Skill Gems`,
+        [STAT.critMulti]: `+${v}% to Global Critical Strike Multiplier`,
+        [STAT.lifePct]: `${v}% increased maximum Life`
+      }
+      if (!tpl[id]) return null
+      out.push(tpl[id])
+    }
+  }
+  return out
+}
+
 export const profilesFor = (slot: SlotId, subtype: string) =>
   PROFILES.filter((p) => p.slot === slot && (!p.only || p.only.includes(subtype)))

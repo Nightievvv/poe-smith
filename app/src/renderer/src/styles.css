@@ -169,6 +169,12 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; width: 100
 .pc-row.off { opacity: .5; }
 .pc-row input[type='checkbox'] { margin: 0; accent-color: var(--brass); }
 .pc-label { min-width: 0; overflow-wrap: anywhere; }
+.pc-colors { display: flex; align-items: center; gap: 6px; padding: 3px 0 2px 22px; }
+.pc-colors .num { width: 40px; }
+.sock-r { border-color: #a8483c !important; }
+.sock-g { border-color: #5a9a4a !important; }
+.sock-b { border-color: #4a6fb0 !important; }
+.sock-w { border-color: #c8c8c8 !important; }
 .num { width: 56px; padding: 3px 5px !important; font-size: 12px; text-align: right; }
 .pc-results { display: grid; gap: 6px; }
 .pc-results a { color: var(--brass); text-decoration: none; font-size: 12px; white-space: nowrap; }
@@ -191,5 +197,16 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; width: 100
 .step .meta dt { color: var(--muted); }
 .step .meta dd { margin: 0; }
 .cur { color: #c8b88a; }
+.variants { display: grid; gap: 6px; }
+.variant { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 8px 10px; cursor: pointer; }
+.variant:hover { border-color: var(--brass-dim); }
+.variant.on { border-color: var(--brass); background: color-mix(in srgb, var(--brass) 10%, var(--panel-2)); }
+.vname { font-weight: 600; min-width: 0; }
+.vcost { grid-row: 1; grid-column: 2; white-space: nowrap; }
+.vchips { grid-column: 1 / -1; display: flex; gap: 4px; flex-wrap: wrap; }
+.mech { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; color: var(--muted); }
+.best { margin-left: 8px; font-size: 10.5px; font-weight: 500; color: var(--brass); text-transform: uppercase; letter-spacing: .04em; }
+.step.optional { border-style: dashed; }
+.opt { display: inline-block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }

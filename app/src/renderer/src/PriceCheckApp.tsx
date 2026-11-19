@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PcFilter, PcResult, PriceCheckState, Settings } from '../../shared/types'
 import { makeT } from './i18n'
 import { ItemCard } from './ItemCard'
-import { fmtPrice, fmtTotal } from './format'
+import { errText, fmtPrice, fmtTotal } from './format'
 
 const GROUPS: { id: string; kinds: PcFilter['kind'][] }[] = [
   { id: 'pc.general', kinds: ['base', 'ilvl', 'pseudo', 'weapon', 'defence'] },
+  { id: 'pc.sockets', kinds: ['links', 'sockets'] },
   { id: 'pc.implicits', kinds: ['implicit', 'enchant'] },
   { id: 'pc.mods', kinds: ['explicit', 'fractured', 'crafted'] }
 ]
@@ -32,7 +33,7 @@ export function PriceCheckApp() {
       const r = await window.api.pcSearch(s.item, f)
       if (id === searchId.current) setResult(r)
     } catch (e) {
-      if (id === searchId.current) setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e))
+      if (id === searchId.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
       if (id === searchId.current) setLoading(false)
     }
@@ -82,11 +83,14 @@ export function PriceCheckApp() {
                 <div key={g.id} className="pc-group">
                   <div className="lbl">{t(g.id as never)}</div>
                   {list.map((f) => (
-                    <div key={f.key} className={'pc-row k-' + f.kind + (f.matched ? '' : ' off')}>
+                    <div key={f.key}>
+                    <div className={'pc-row k-' + f.kind + (f.matched ? '' : ' off')}>
                       <input type="checkbox" checked={f.enabled} disabled={!f.matched} aria-label={f.label}
                         onChange={(e) => patch(f.key, { enabled: e.target.checked })} />
                       <span className={'tier' + (f.tier ? '' : ' none')}>{f.tier ?? '·'}</span>
-                      <span className="pc-label" title={f.matched ? undefined : t('pc.noStat')}>{f.label}</span>
+                      <span className="pc-label" title={f.matched ? undefined : t('pc.noStat')}>
+                        {f.kind === 'links' ? t('pc.links') : f.kind === 'sockets' ? t('pc.socketCount') : f.label}
+                      </span>
                       {f.kind !== 'base' && f.matched && (
                         <>
                           <input className="num" type="text" inputMode="decimal" placeholder={t('pc.min')} aria-label={t('pc.min')}
@@ -95,6 +99,17 @@ export function PriceCheckApp() {
                             value={f.max ?? ''} onChange={(e) => patch(f.key, { max: parseNum(e.target.value), enabled: true })} />
                         </>
                       )}
+                    </div>
+                    {f.colors && (
+                      <div className="pc-colors">
+                        <span className="muted small">{t('pc.colors')}</span>
+                        {(['r', 'g', 'b', 'w'] as const).map((c) => (
+                          <input key={c} className={'num sock-' + c} type="text" inputMode="numeric" placeholder={c.toUpperCase()}
+                            aria-label={t(`pc.color.${c}` as never)} title={t(`pc.color.${c}` as never)} value={f.colors![c] ?? ''}
+                            onChange={(e) => patch(f.key, { colors: { ...f.colors!, [c]: parseNum(e.target.value) }, enabled: true })} />
+                        ))}
+                      </div>
+                    )}
                     </div>
                   ))}
                 </div>
@@ -105,7 +120,7 @@ export function PriceCheckApp() {
               <button className="btn" disabled={loading} onClick={() => setFilters(state.filters)}>{t('pc.reset')}</button>
             </div>
             {loading && <p className="note">{t('item.checking')}</p>}
-            {error && <p className="note warn">{t('market.profileError', { err: error })}</p>}
+            {error && <p className="note warn">{errText(t, error)}</p>}
             {result && !loading && (
               <div className="pc-results">
                 <div className="detail-head">

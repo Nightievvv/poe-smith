@@ -102,6 +102,8 @@ export interface ProfileResult {
   divine?: number
   /** 3–5 свежих лотов в пределах рыночной цены */
   examples?: ExampleItem[]
+  /** целевой предмет для крафта по профилю: самая частая база + моды по порогам профиля */
+  craftItem?: ParsedItem
   error?: string
 }
 
@@ -172,7 +174,9 @@ export interface PcFilter {
   key: string
   /** что показать в строке; для модов — текст мода */
   label: string
-  kind: ModKind | 'pseudo' | 'base' | 'ilvl' | 'weapon' | 'defence'
+  kind: ModKind | 'pseudo' | 'base' | 'ilvl' | 'weapon' | 'defence' | 'sockets' | 'links'
+  /** для гнёзд и связей: минимальное число гнёзд каждого цвета (белые — W) */
+  colors?: { r: number | null; g: number | null; b: number | null; w: number | null }
   /** id фильтра на трейде (stat id или имя поля weapon/armour/misc) */
   statId?: string
   tier?: string
@@ -215,6 +219,8 @@ export interface CraftCost {
 
 export interface CraftStep {
   kind: 'base' | 'implicit' | 'explicit' | 'bench' | 'finish'
+  /** шаг доводки: нужен, только если мод не выпал на предыдущих шагах */
+  optional?: boolean
   title: string
   detail?: string
   currency: CraftCost[]
@@ -233,13 +239,24 @@ export interface CraftTarget {
   source?: string
 }
 
+/** Один способ скрафтить предмет: основной метод + доводка оставшихся модов + имплиситы и финиш. */
+export interface CraftVariant {
+  name: string
+  /** механики, задействованные в варианте: Currency, Essence, Fossil, Harvest, Meta-craft, Bench, Eldritch… */
+  mechanics: string[]
+  steps: CraftStep[]
+  /** ожидаемая стоимость: основной метод + доводка с учётом шанса, что мод уже выпал */
+  totalChaos: number | null
+  /** заметки к варианту (риски, допущения) */
+  notes: string[]
+}
+
 export interface CraftPlan {
-  method: string
   stage: string
   ilvl: number
   targets: CraftTarget[]
-  steps: CraftStep[]
-  totalChaos: number | null
+  /** варианты по возрастанию стоимости; первый — рекомендуемый */
+  variants: CraftVariant[]
   divine: number | null
   warnings: string[]
 }

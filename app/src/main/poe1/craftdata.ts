@@ -10,7 +10,13 @@ import { USER_AGENT } from '../leagues'
  * когда меняется версия игры.
  */
 const BASE = 'https://repoe-fork.github.io/'
-const FILES = ['mods.min.json', 'base_items.min.json', 'essences.min.json', 'crafting_bench_options.min.json'] as const
+const FILES = ['mods.min.json', 'base_items.min.json', 'essences.min.json', 'crafting_bench_options.min.json', 'fossils.min.json'] as const
+
+export interface Fossil {
+  name: string
+  /** тег мода → множитель веса (×10 = 1000/100; 0 — такие моды не выпадут) */
+  weights: { tag: string; mult: number }[]
+}
 
 export interface Mod {
   id: string
@@ -57,6 +63,7 @@ export interface CraftData {
   bases: Map<string, Base[]>
   essences: Essence[]
   bench: BenchCraft[]
+  fossils: Fossil[]
 }
 
 const dir = () => join(app.getPath('userData'), 'repoe')
@@ -144,7 +151,14 @@ function build(version: string): CraftData {
       cost: Object.entries(b.cost ?? {}).map(([cid, n]) => ({ name: currencyName.get(cid) ?? cid.split('/').pop()!, count: n as number }))
     }))
   // моды верстака лежат в mods.json с domain crafted — уже загружены
-  return { version, mods, bases, essences, bench }
+  const rawFos = read('fossils.min.json') as Record<string, any>
+  const fossils: Fossil[] = Object.values(rawFos)
+    .filter((f) => f.name && ((f.positive_mod_weights?.length ?? 0) > 0 || (f.negative_mod_weights?.length ?? 0) > 0))
+    .map((f) => ({
+      name: f.name,
+      weights: [...(f.positive_mod_weights ?? []), ...(f.negative_mod_weights ?? [])].map((w: { tag: string; weight: number }) => ({ tag: w.tag, mult: w.weight / 100 }))
+    }))
+  return { version, mods, bases, essences, bench, fossils }
 }
 
 export async function loadCraftData(): Promise<CraftData> {

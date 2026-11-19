@@ -46,6 +46,13 @@ export async function defaultFilters(item: ParsedItem): Promise<PriceCheckState>
     if (v) f.push({ key: k, label, kind: 'defence', statId: k, value: v, min: down(v), max: null, enabled: false, matched: true })
   }
 
+  const so = item.props.sockets
+  if (so) {
+    const none = { r: null, g: null, b: null, w: null }
+    f.push({ key: 'links', label: 'Links', kind: 'links', value: so.links, min: so.links, max: null, enabled: so.links >= 5, matched: true, colors: { ...none } })
+    f.push({ key: 'sockets', label: 'Sockets', kind: 'sockets', value: so.count, min: so.count, max: null, enabled: false, matched: true, colors: { ...none } })
+  }
+
   const preferLocal = !!(item.props.weapon || item.props.defence)
   item.mods.forEach((m, i) => {
     const hit = matchStat(m.text, m.kind, preferLocal)
@@ -73,9 +80,14 @@ export async function pcSearch(league: string, item: ParsedItem, filters: PcFilt
   const weapon: Record<string, unknown> = {}
   const armour: Record<string, unknown> = {}
   const misc: Record<string, unknown> = {}
+  const socket: Record<string, unknown> = {}
   const stats: { id: string; value: Record<string, number> }[] = []
   for (const x of on) {
-    if (x.kind === 'weapon') weapon[x.statId!] = val(x)
+    if (x.kind === 'sockets' || x.kind === 'links') {
+      // трейд считает цвета по количеству (R/G/B/W), конкретный порядок гнёзд не задаётся
+      const c = Object.fromEntries(Object.entries(x.colors ?? {}).filter(([, v]) => v != null && v > 0))
+      socket[x.kind] = { ...val(x), ...c }
+    } else if (x.kind === 'weapon') weapon[x.statId!] = val(x)
     else if (x.kind === 'defence') armour[x.statId!] = val(x)
     else if (x.kind === 'ilvl') misc.ilvl = val(x)
     else if (x.statId && x.kind !== 'base') stats.push({ id: x.statId, value: val(x) })
@@ -87,6 +99,7 @@ export async function pcSearch(league: string, item: ParsedItem, filters: PcFilt
   if (Object.keys(weapon).length) fl.weapon_filters = { filters: weapon }
   if (Object.keys(armour).length) fl.armour_filters = { filters: armour }
   if (Object.keys(misc).length) fl.misc_filters = { filters: misc }
+  if (Object.keys(socket).length) fl.socket_filters = { filters: socket }
   const query: Record<string, unknown> = { status: { option: 'available' }, stats: [{ type: 'and', filters: stats }], filters: fl }
   if (base) query.type = item.baseType
   if (rarity === 'unique') query.name = item.name
