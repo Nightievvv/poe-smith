@@ -13,6 +13,12 @@ const api: Api = {
   scanMarket: (q, more) => ipcRenderer.invoke('market:scan', q, more),
   getDivine: () => ipcRenderer.invoke('rates:divine'),
   getLimits: () => ipcRenderer.invoke('limits:get'),
+  getPriceCheck: () => ipcRenderer.invoke('pc:get'),
+  pcSearch: (item, filters) => ipcRenderer.invoke('pc:search', item, filters),
+  closePriceCheck: () => ipcRenderer.send('pc:close'),
+  craftPlan: (item, targets, lang) => ipcRenderer.invoke('craft:plan', item, targets, lang),
+  craftDataStatus: () => ipcRenderer.invoke('craft:status'),
+  openInCraft: (item) => ipcRenderer.send('craft:open', item),
   hide: () => ipcRenderer.send('overlay:hide'),
   onEvent: (cb) => {
     const h = (_: unknown, e: OverlayEvent) => cb(e)
@@ -22,3 +28,5 @@ const api: Api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
+if (process.env.EXILE_FORGE_DEBUG)
+  contextBridge.exposeInMainWorld('debug', { item: (text: string, mode: 'read' | 'price') => ipcRenderer.invoke('debug:item', text, mode) })

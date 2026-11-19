@@ -1,12 +1,13 @@
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import type { ExampleItem, ExampleMod, MarketQuery, ProfileResult, Settings, SlotMarket } from '../../shared/types'
+import type { ExampleItem, MarketQuery, ProfileResult, Settings, SlotId, SlotMarket } from '../../shared/types'
+import { listingToItem } from './listing'
 import { analyze, type PricePoint } from '../../shared/analyze'
 import { SLOT_CATEGORY, subtypeOf } from '../../shared/poe1/catalog'
 import { profilesFor, type Profile } from './profiles'
 import { buildQuery, type QuerySpec } from './query'
-import { search, fetchListings, tradeUrl, type Listing, type RawMod } from './trade'
+import { search, fetchListings, tradeUrl, type Listing } from './trade'
 import { getRates, type Rates } from './ninja'
 
 /** Сколько свежих лотов выгружаем на профиль: 2 запроса fetch. Больше лимиты трейда не позволяют. */
@@ -16,15 +17,19 @@ const BATCH = 5
 const EXAMPLES = 5
 
 interface Store {
+  /** версия формата: при смене формата примеров старые результаты сбрасываются, история цен остаётся */
+  v?: number
   slots: Record<string, SlotMarket>
   /** league|profileId → история медиан */
   history: Record<string, { t: number; m: number }[]>
 }
 
+const VERSION = 2
 const file = () => join(app.getPath('userData'), 'market-cache.json')
-let store: Store = { slots: {}, history: {} }
+let store: Store = { v: VERSION, slots: {}, history: {} }
 try {
   if (existsSync(file())) store = JSON.parse(readFileSync(file(), 'utf-8'))
+  if (store.v !== VERSION) store = { v: VERSION, slots: {}, history: store.history ?? {} }
 } catch {
   /* повреждённый кэш — начинаем заново */
 }
@@ -49,36 +54,9 @@ function toPoints(listings: Listing[], rates: Rates): (PricePoint & { l: Listing
   return pts
 }
 
-/** Трейд размечает ключевые слова: "[PlayerItemRarity|Item Rarity]" → "Item Rarity", "[Onslaught]" → "Onslaught". */
-const clean = (s: string) => s.replace(/\[([^\]|]+)\|([^\]]+)\]/g, '$2').replace(/\[([^\]]+)\]/g, '$1')
-
-function mods(list: RawMod[] | undefined, kind: ExampleMod['kind']): ExampleMod[] {
-  return (list ?? []).map((m) => {
-    if (typeof m === 'string') return { text: clean(m), kind }
-    const k: ExampleMod['kind'] = m.flags?.crafted || m.domain === 'crafted' ? 'crafted' : m.flags?.fractured ? 'fractured' : kind
-    return { text: clean(m.description), tier: m.mods?.[0]?.tier, kind: k }
-  })
-}
-
-function toExample(p: PricePoint & { l: Listing }): ExampleItem {
-  const it = p.l.item
+function toExample(p: PricePoint & { l: Listing }, slot: SlotId): ExampleItem {
   const pr = p.l.listing.price!
-  return {
-    name: it.name || it.typeLine,
-    baseType: it.baseType,
-    ilvl: it.ilvl ?? null,
-    rarity: it.rarity ?? 'Rare',
-    corrupted: !!it.corrupted,
-    price: `${pr.amount} ${pr.currency}`,
-    priceDiv: p.div,
-    mods: [
-      ...mods(it.enchantMods, 'enchant'),
-      ...mods(it.implicitMods, 'implicit'),
-      ...mods(it.fracturedMods, 'fractured'),
-      ...mods(it.explicitMods, 'explicit'),
-      ...mods(it.craftedMods, 'crafted')
-    ]
-  }
+  return { ...listingToItem(p.l, slot), price: `${pr.amount} ${pr.currency}`, priceDiv: p.div }
 }
 
 function trendFor(hist: { t: number; m: number }[] | undefined, median: number): number | null {
@@ -90,7 +68,7 @@ function trendFor(hist: { t: number; m: number }[] | undefined, median: number):
 }
 
 /** Поиск + выгрузка + анализ. Используется и для профилей, и для проверки цены своего предмета. */
-export async function runQuery(league: string, spec: QuerySpec, settings: Settings) {
+export async function runQuery(league: string, spec: QuerySpec, settings: Settings, slot: SlotId) {
   const rates = await getRates(league)
   const s = await search(league, buildQuery(spec, settings.maxAgeDays))
   const listings = s.result.length ? await fetchListings(s.result.slice(0, SAMPLE), s.id) : []
@@ -102,7 +80,7 @@ export async function runQuery(league: string, spec: QuerySpec, settings: Settin
   for (const p of pts) {
     if (examples.length >= EXAMPLES || seen.has(p.account) || p.div < stats.lo || p.div > stats.hi) continue
     seen.add(p.account)
-    examples.push(toExample(p))
+    examples.push(toExample(p, slot))
   }
   const { values, lo, hi, median, q1, q3, kept, cut, sellers, fresh } = stats
   return { total: s.total, tradeUrl: tradeUrl(league, s.id), values, lo, hi, median, q1, q3, kept, cut, sellers, fresh, divine: rates.divine, examples }
@@ -162,7 +140,7 @@ export async function scan(league: string, q: MarketQuery, more: boolean, settin
     for (const p of todo) {
       let r: ProfileResult
       try {
-        const res = await runQuery(league, specFor(p, q, minChaos), settings)
+        const res = await runQuery(league, specFor(p, q, minChaos), settings, q.slot)
         const hk = `${league}|${p.id}|${minChaos}`
         const hist = (store.history[hk] ??= [])
         r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, ...res, trend: trendFor(hist, res.median) }

@@ -1,5 +1,8 @@
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
+import { PriceCheckApp } from './PriceCheckApp'
 import './styles.css'
 
-createRoot(document.getElementById('root')!).render(<App />)
+// одно и то же приложение обслуживает два окна: основное и прайс-чек (#pricecheck)
+const Root = location.hash === '#pricecheck' ? PriceCheckApp : App
+createRoot(document.getElementById('root')!).render(<Root />)

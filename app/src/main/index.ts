@@ -2,10 +2,15 @@ import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from 'elec
 import { join } from 'path'
 import { loadSettings, writeSettings, hasSession, setSession, clearSession } from './settings'
 import { fetchLeagues } from './leagues'
-import { HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type MarketQuery, type OverlayEvent, type Settings } from '../shared/types'
+import {
+  HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type Lang, type MarketQuery, type OverlayEvent, type ParsedItem, type PcFilter,
+  type PriceCheckState, type Settings
+} from '../shared/types'
 import { parseItem } from '../shared/poe1/item'
 import { copyItemText } from './poe1/copy'
-import { priceCheck } from './poe1/pricecheck'
+import { defaultFilters, pcSearch } from './poe1/pricecheck'
+import { buildPlan } from './poe1/planner'
+import { craftStatus, onCraftStatus } from './poe1/craftdata'
 import { getCached, scan } from './poe1/market'
 import { getRates } from './poe1/ninja'
 import { limits } from './poe1/trade'
@@ -47,19 +52,56 @@ function sendLimits() {
   send({ type: 'limits', data: limits() })
 }
 
-/** Ctrl+C в игре → разбор предмета → (для оценки) поиск похожих на трейде. */
+// ---------- окно прайс-чека: слева от основного ----------
+let pcWin: BrowserWindow | null = null
+let pcState: PriceCheckState | null = null
+
+function rendererUrl(win: BrowserWindow, hash = '') {
+  if (process.env['ELECTRON_RENDERER_URL']) win.loadURL(process.env['ELECTRON_RENDERER_URL'] + hash)
+  else win.loadFile(join(__dirname, '../renderer/index.html'), hash ? { hash: hash.slice(1) } : undefined)
+}
+
+function showPriceCheck() {
+  const main = win?.getBounds()
+  const width = 400
+  const { workArea } = screen.getPrimaryDisplay()
+  const x = main ? Math.max(workArea.x, main.x - width - 8) : workArea.x + 24
+  const y = main?.y ?? workArea.y + 40
+  const height = main?.height ?? 720
+  if (!pcWin || pcWin.isDestroyed()) {
+    pcWin = new BrowserWindow({
+      x, y, width, height, minWidth: 340, minHeight: 300, frame: false, transparent: true, backgroundColor: '#00000000',
+      resizable: true, skipTaskbar: true, alwaysOnTop: true, show: false,
+      webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false, contextIsolation: true }
+    })
+    pcWin.setAlwaysOnTop(true, 'screen-saver')
+    pcWin.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://')) shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    pcWin.once('ready-to-show', () => pcWin?.showInactive())
+    rendererUrl(pcWin, '#pricecheck')
+  } else {
+    pcWin.setBounds({ x, y, width: pcWin.getBounds().width, height })
+    pcWin.showInactive()
+    pcWin.webContents.send('overlay:event', { type: 'priceCheck', data: pcState } satisfies OverlayEvent)
+  }
+}
+
+/** Ctrl+Alt+C в игре → разбор предмета → чтение в «Крафт» или окно прайс-чека. */
 async function readItem(mode: 'read' | 'price') {
   // если в фокусе сам оверлей, Ctrl+C ушёл бы ему, а не игре
-  const text = win?.isFocused() ? null : await copyItemText()
+  const focused = win?.isFocused() || pcWin?.isFocused()
+  const text = focused ? null : await copyItemText()
   const item = text ? parseItem(text) : null
-  if (win && !win.isVisible()) win.showInactive() // не забираем фокус у игры
-  send({ type: 'item', item, mode })
-  send({ type: 'hotkey', id: mode })
-  if (mode !== 'price' || !item) return
-  send({ type: 'priceCheck', data: { item, criteria: [], result: null, loading: true } })
-  const data = await priceCheck(await currentLeague(), item, settings)
-  send({ type: 'priceCheck', data })
-  sendLimits()
+  if (mode === 'read' || !item) {
+    if (win && !win.isVisible()) win.showInactive() // не забираем фокус у игры
+    send({ type: 'item', item, mode: 'read' })
+    send({ type: 'hotkey', id: 'read' })
+    return
+  }
+  pcState = await defaultFilters(item)
+  showPriceCheck()
 }
 
 const actions: Record<HotkeyId, () => void> = {
@@ -134,8 +176,7 @@ function createWindow() {
     showOverlay()
   })
 
-  if (process.env['ELECTRON_RENDERER_URL']) win.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  else win.loadFile(join(__dirname, '../renderer/index.html'))
+  rendererUrl(win)
 }
 
 ipcMain.handle('settings:get', () => settings)
@@ -179,6 +220,40 @@ ipcMain.handle('rates:divine', async () => {
   }
 })
 ipcMain.handle('limits:get', () => limits())
+
+// прайс-чек
+ipcMain.handle('pc:get', () => pcState)
+ipcMain.handle('pc:search', async (_e, item: ParsedItem, filters: PcFilter[]) => {
+  try {
+    return await pcSearch(await currentLeague(), item, filters)
+  } finally {
+    sendLimits()
+  }
+})
+ipcMain.on('pc:close', () => pcWin?.hide())
+
+// отладка без игры: прайс-чек и крафт по тексту предмета (только с переменной окружения EXILE_FORGE_DEBUG)
+if (process.env.EXILE_FORGE_DEBUG) {
+  ipcMain.handle('debug:item', async (_e, text: string, mode: 'read' | 'price') => {
+    const item = parseItem(text)
+    if (!item) return false
+    if (mode === 'read') send({ type: 'item', item, mode })
+    else {
+      pcState = await defaultFilters(item)
+      showPriceCheck()
+    }
+    return true
+  })
+}
+
+// крафт
+onCraftStatus((s) => send({ type: 'craftData', data: s }))
+ipcMain.handle('craft:status', () => craftStatus())
+ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lang: Lang) => buildPlan(item, targets, lang, await currentLeague()))
+ipcMain.on('craft:open', (_e, item: ParsedItem) => {
+  if (win && !win.isVisible()) win.showInactive()
+  send({ type: 'openCraft', item })
+})
 
 app.on('second-instance', showOverlay)
 app.whenReady().then(() => {

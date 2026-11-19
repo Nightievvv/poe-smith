@@ -6,6 +6,7 @@ const keybd_event = user32.func('void __stdcall keybd_event(uint8 bVk, uint8 bSc
 const GetAsyncKeyState = user32.func('int16 __stdcall GetAsyncKeyState(int vKey)')
 
 const VK_CONTROL = 0x11
+const VK_MENU = 0x12 // Alt
 const VK_C = 0x43
 const KEYUP = 0x0002
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -16,9 +17,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  */
 function sendCtrlC() {
   const ctrlHeld = (GetAsyncKeyState(VK_CONTROL) & 0x8000) !== 0
+  const altHeld = (GetAsyncKeyState(VK_MENU) & 0x8000) !== 0
   if (!ctrlHeld) keybd_event(VK_CONTROL, 0, 0, 0)
+  // Ctrl+Alt+C — расширенный формат: в нём игра пишет тиры модов, префикс/суффикс и тир эльдрич-имплиситов
+  if (!altHeld) keybd_event(VK_MENU, 0, 0, 0)
   keybd_event(VK_C, 0, 0, 0)
   keybd_event(VK_C, 0, KEYUP, 0)
+  if (!altHeld) keybd_event(VK_MENU, 0, KEYUP, 0)
   if (!ctrlHeld) keybd_event(VK_CONTROL, 0, KEYUP, 0)
 }
 

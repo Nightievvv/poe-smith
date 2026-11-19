@@ -27,11 +27,15 @@ export interface Listing {
     craftedMods?: RawMod[]
     fracturedMods?: RawMod[]
     enchantMods?: RawMod[]
+    properties?: { name: string; values: [string, number][] }[]
+    requirements?: { name: string; values: [string, number][] }[]
+    sockets?: { group: number; sColour: string }[]
+    extended?: { category?: string; dps?: number; pdps?: number; edps?: number }
   }
 }
 
 /** Трейд отдаёт моды строками (старый формат) или объектами с тирами (новый). */
-export type RawMod = string | { description: string; domain?: string; flags?: { crafted?: boolean; fractured?: boolean }; mods?: { tier?: string }[] }
+export type RawMod = string | { description: string; domain?: string; flags?: { crafted?: boolean; fractured?: boolean }; mods?: { tier?: string; name?: string }[] }
 
 function headers(json = false): Record<string, string> {
   const h: Record<string, string> = { 'User-Agent': USER_AGENT, Accept: 'application/json' }

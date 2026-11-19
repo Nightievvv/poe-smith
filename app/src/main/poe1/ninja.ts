@@ -15,6 +15,32 @@ const cache = new Map<string, Rates>()
  * Раньше использовался эндпоинт по лотам в тайниках (stash): там мало данных, и курс Divine был занижен в ~3 раза.
  * id в ответе совпадают с id валют на трейде, поэтому сопоставление не нужно.
  */
+const books = new Map<string, { at: number; byName: Map<string, number> }>()
+
+/** Цены валюты, эссенций, фоссилий и резонаторов по английскому названию (в Chaos) — для оценки стоимости крафта. */
+export async function getPriceBook(league: string): Promise<Map<string, number>> {
+  const hit = books.get(league)
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.byName
+  const byName = new Map<string, number>([['Chaos Orb', 1]])
+  for (const type of ['Currency', 'Essence', 'Fossil', 'Resonator']) {
+    try {
+      const url = `https://poe.ninja/poe1/api/economy/exchange/current/overview?league=${encodeURIComponent(league)}&type=${type}`
+      const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' } })
+      if (!res.ok) continue
+      const j = (await res.json()) as { lines: { id: string; primaryValue: number }[]; items?: { id: string; name: string }[] }
+      const names = new Map((j.items ?? []).map((i) => [i.id, i.name]))
+      for (const l of j.lines) {
+        const n = names.get(l.id)
+        if (n && l.primaryValue > 0) byName.set(n, l.primaryValue)
+      }
+    } catch {
+      /* без цен этого типа план всё равно строится */
+    }
+  }
+  books.set(league, { at: Date.now(), byName })
+  return byName
+}
+
 export async function getRates(league: string): Promise<Rates> {
   const hit = cache.get(league)
   if (hit && Date.now() - hit.at < 15 * 60 * 1000) return hit

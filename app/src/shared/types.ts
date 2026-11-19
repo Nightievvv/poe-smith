@@ -63,23 +63,10 @@ export interface I18nText {
   en: string
 }
 
-export interface ExampleMod {
-  text: string
-  /** тир с трейда: P1 — лучший префикс, S1 — лучший суффикс, R — крафт */
-  tier?: string
-  kind: 'implicit' | 'explicit' | 'crafted' | 'fractured' | 'enchant'
-}
-
 /** Реальный лот с трейда — чтобы увидеть фактические моды. */
-export interface ExampleItem {
-  name: string
-  baseType: string
-  ilvl: number | null
-  rarity: string
-  corrupted: boolean
+export interface ExampleItem extends ParsedItem {
   price: string
   priceDiv: number
-  mods: ExampleMod[]
 }
 
 export interface MarketQuery {
@@ -136,6 +123,38 @@ export interface SlotMarket {
   error?: string
 }
 
+export type ModKind = 'enchant' | 'implicit' | 'explicit' | 'crafted' | 'fractured'
+
+export interface ItemMod {
+  text: string
+  kind: ModKind
+  /** P1 — лучший префикс, S3 — суффикс третьего тира, R2 — крафт верстака второго ранга, Greater — тир эльдрич-имплисита */
+  tier?: string
+  gen?: 'prefix' | 'suffix'
+  /** название аффикса, например "Cheetah's" */
+  affix?: string
+}
+
+export type DamageType = 'fire' | 'cold' | 'lightning' | 'ele'
+
+export interface ItemProps {
+  quality?: number
+  sockets?: { count: number; links: number; text: string }
+  req?: { level?: number; str?: number; dex?: number; int?: number }
+  weapon?: {
+    phys?: [number, number]
+    ele: { type: DamageType; min: number; max: number }[]
+    chaos?: [number, number]
+    crit?: number
+    aps?: number
+    pdps: number
+    edps: number
+    cdps: number
+    dps: number
+  }
+  defence?: { ar?: number; ev?: number; es?: number; ward?: number; block?: number }
+}
+
 export interface ParsedItem {
   itemClass: string
   rarity: string
@@ -143,19 +162,92 @@ export interface ParsedItem {
   baseType: string
   itemLevel: number | null
   slot: SlotId | null
-  implicits: string[]
-  mods: string[]
-  /** тиры модов (если предмет взят с трейда), по индексам mods */
-  modTiers?: (string | undefined)[]
+  mods: ItemMod[]
+  props: ItemProps
   corrupted: boolean
 }
 
-export interface PriceCheck {
+// ---------- прайс-чек ----------
+export interface PcFilter {
+  key: string
+  /** что показать в строке; для модов — текст мода */
+  label: string
+  kind: ModKind | 'pseudo' | 'base' | 'ilvl' | 'weapon' | 'defence'
+  /** id фильтра на трейде (stat id или имя поля weapon/armour/misc) */
+  statId?: string
+  tier?: string
+  /** значение на самом предмете */
+  value: number | null
+  min: number | null
+  max: number | null
+  enabled: boolean
+  /** удалось ли сопоставить мод с фильтром трейда */
+  matched: boolean
+}
+
+export interface PcRow {
+  name: string
+  ilvl: number | null
+  price: string
+  priceDiv: number
+}
+
+export interface PcResult {
+  total: number
+  rows: PcRow[]
+  tradeUrl: string
+  divine: number
+}
+
+export interface PriceCheckState {
   item: ParsedItem
-  /** условия поиска, понятные человеку */
-  criteria: string[]
-  result: ProfileResult | null
+  filters: PcFilter[]
+}
+
+// ---------- крафт ----------
+export interface CraftCost {
+  name: string
+  /** «×1», «~40», «×1500» */
+  count: string
+  /** ожидаемая стоимость в Chaos (если известна цена) */
+  chaos?: number
+}
+
+export interface CraftStep {
+  kind: 'base' | 'implicit' | 'explicit' | 'bench' | 'finish'
+  title: string
+  detail?: string
+  currency: CraftCost[]
+  station?: string
+  farm?: string
+}
+
+export interface CraftTarget {
+  text: string
+  kind: ModKind
+  tier?: string
+  gen?: 'prefix' | 'suffix' | 'implicit'
+  /** нашли ли мод в данных игры */
+  found: boolean
+  /** откуда мод: база, эльдрич, порча, крафт… */
+  source?: string
+}
+
+export interface CraftPlan {
+  method: string
+  stage: string
+  ilvl: number
+  targets: CraftTarget[]
+  steps: CraftStep[]
+  totalChaos: number | null
+  divine: number | null
+  warnings: string[]
+}
+
+export interface CraftDataStatus {
+  ready: boolean
   loading: boolean
+  version?: string
   error?: string
 }
 
@@ -169,8 +261,10 @@ export type OverlayEvent =
   | { type: 'clickThrough'; value: boolean }
   | { type: 'market'; data: SlotMarket }
   | { type: 'item'; item: ParsedItem | null; mode: 'read' | 'price' }
-  | { type: 'priceCheck'; data: PriceCheck }
+  | { type: 'priceCheck'; data: PriceCheckState | null }
   | { type: 'limits'; data: Limits }
+  | { type: 'craftData'; data: CraftDataStatus }
+  | { type: 'openCraft'; item: ParsedItem }
 
 export interface Api {
   getSettings(): Promise<Settings>
@@ -187,6 +281,16 @@ export interface Api {
   /** курс Divine в Chaos для текущей лиги (poe.ninja, лимиты трейда не тратит) */
   getDivine(): Promise<number | null>
   getLimits(): Promise<Limits>
+  /** последний прайс-чек (окно прайс-чека запрашивает его при открытии) */
+  getPriceCheck(): Promise<PriceCheckState | null>
+  /** поиск по выбранным фильтрам: 15 лотов от дешёвых к дорогим */
+  pcSearch(item: ParsedItem, filters: PcFilter[]): Promise<PcResult>
+  closePriceCheck(): void
+  /** план крафта: targets — индексы модов item.mods, которые нужно получить */
+  craftPlan(item: ParsedItem, targets: number[], lang: Lang): Promise<CraftPlan>
+  craftDataStatus(): Promise<CraftDataStatus>
+  /** открыть предмет во вкладке «Крафт» основного окна */
+  openInCraft(item: ParsedItem): void
   hide(): void
   onEvent(cb: (e: OverlayEvent) => void): () => void
 }

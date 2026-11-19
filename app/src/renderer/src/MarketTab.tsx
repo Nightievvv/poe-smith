@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ExampleItem, Lang, MarketQuery, PriceCheck, SlotId, SlotMarket } from '../../shared/types'
+import type { ExampleItem, Lang, MarketQuery, SlotId, SlotMarket } from '../../shared/types'
 import { SUBTYPES } from '../../shared/poe1/catalog'
 import type { T } from './i18n'
 import { SlotSelect } from './SlotSelect'
 import { PriceDetail } from './PriceDetail'
-import { ItemCard } from './ItemCard'
 import { Examples } from './Examples'
 import { fmtAgo, fmtPrice, fmtTotal } from './format'
 
@@ -17,12 +16,10 @@ interface Props {
   setQuery: (q: MarketQuery) => void
   market: SlotMarket | null
   divine: number | null
-  check: PriceCheck | null
-  clearCheck: () => void
   onExample: (e: ExampleItem) => void
 }
 
-export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate, check, clearCheck, onExample }: Props) {
+export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate, onExample }: Props) {
   const [sort, setSort] = useState<Sort>('score')
   const [sel, setSel] = useState<string | null>(null)
   // черновик отсечки: в запрос попадает только по «Найти» или Enter
@@ -65,17 +62,6 @@ export function MarketTab({ t, lang, query, setQuery, market, divine: divineRate
 
   return (
     <>
-      {check && (
-        <div className="check">
-          <ItemCard item={check.item} t={t} onClose={clearCheck} />
-          {check.loading && <p className="note">{t('item.checking')}</p>}
-          {check.error === 'unsupported' && <p className="note warn">{t('item.unsupported')}</p>}
-          {check.error && check.error !== 'unsupported' && <p className="note warn">{t('market.profileError', { err: check.error })}</p>}
-          {check.criteria.length > 0 && <p className="muted small">{t('item.criteria')}: {check.criteria.join(' · ')}</p>}
-          {check.result && <PriceDetail r={check.result} t={t} divine={check.result.divine ?? divine} title={t('item.title')} />}
-        </div>
-      )}
-
       <div className="row">
         <SlotSelect id="m-slot" label={t('market.slot')} value={query.slot}
           onChange={(s: SlotId) => setQuery({ ...query, slot: s, subtype: SUBTYPES[s][0].id })} t={t} />
