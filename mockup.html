@@ -1,0 +1,551 @@
+<title>Exile Forge Overlay</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+Sans+SC:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: страница-презентация — сверху «экран игры» с оверлеем справа, ниже архитектура и вопросы. Единая тёмная тема (оверлей живёт поверх игры). */
+:root{
+  color-scheme: dark;
+  --bg:#12151b;          /* фон страницы */
+  --panel:#1a1f27;       /* поверхность оверлея */
+  --panel-2:#222833;     /* вложенные блоки */
+  --line:#2e3542;
+  --fg:#e3e6ec;
+  --muted:#8e97a8;
+  --brass:#d0a65e;       /* акцент */
+  --brass-dim:#7a6237;
+  --ok:#6fbf8a; --warn:#e0a84a; --bad:#d9675b;
+  /* редкость предметов — цвета из «словаря» самой игры */
+  --r-normal:#c8c8c8; --r-magic:#8888ff; --r-rare:#e6d36a; --r-unique:#c67a3c; --r-currency:#b8a888;
+  --f-display:"Alegreya Sans SC", "Trebuchet MS", sans-serif;
+  --f-body:"Inter", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"JetBrains Mono", Consolas, monospace;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:14px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-block:28px 64px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));display:grid;gap:40px}
+h1,h2,h3{font-family:var(--f-display);font-weight:700;letter-spacing:.02em;text-wrap:balance;margin:0}
+h1{font-size:30px}
+h2{font-size:22px;color:var(--brass)}
+h3{font-size:16px}
+p{margin:0}
+.lede{color:var(--muted);max-width:72ch;margin-top:6px}
+.tag{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--brass);border:1px solid var(--brass-dim);border-radius:3px;padding:1px 6px}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+/* ===== «экран игры» ===== */
+.stage{position:relative;border:1px solid var(--line);border-radius:6px;overflow:hidden;min-height:680px;
+  background:
+    radial-gradient(ellipse at 30% 60%, rgba(120,70,40,.35), transparent 55%),
+    radial-gradient(ellipse at 70% 20%, rgba(40,60,90,.35), transparent 60%),
+    linear-gradient(160deg,#0b0d10,#1a140f 60%,#0e0c0a);
+  display:flex;justify-content:flex-end;padding:18px}
+.stage::before{content:"Окно игры (Windowed Fullscreen)";position:absolute;left:18px;top:14px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.35)}
+.hud{position:absolute;left:18px;bottom:18px;display:flex;gap:10px;align-items:flex-end}
+.orb{width:84px;height:84px;border-radius:50%;border:2px solid #4a3a26;opacity:.75}
+.orb.life{background:radial-gradient(circle at 40% 35%,#d84a3a,#5c0f0a 70%)}
+.orb.mana{background:radial-gradient(circle at 40% 35%,#4a7ad8,#0a1d5c 70%)}
+.hud .bar{width:240px;height:38px;border:1px solid rgba(255,255,255,.12);border-radius:4px;background:rgba(0,0,0,.35)}
+
+/* ===== оверлей ===== */
+.ov{position:relative;width:440px;max-width:100%;background:color-mix(in srgb,var(--panel) calc(var(--op,94) * 1%),transparent);
+  border:1px solid var(--line);border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.55);display:flex;flex-direction:column;max-height:644px;backdrop-filter:blur(3px)}
+.ov-head{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);cursor:move}
+.ov-head .logo{font-family:var(--f-display);font-weight:700;color:var(--brass);font-size:16px;flex:1}
+.kbd{font-family:var(--f-mono);font-size:11px;border:1px solid var(--line);border-bottom-width:2px;border-radius:3px;padding:0 5px;color:var(--muted)}
+.ico{width:26px;height:26px;border:1px solid transparent;border-radius:4px;background:none;color:var(--muted);cursor:pointer;display:grid;place-items:center}
+.ico:hover{border-color:var(--line);color:var(--fg)}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;background:none;border:0;border-bottom:2px solid transparent;padding:9px 4px;cursor:pointer;color:var(--muted);font-weight:600}
+.tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--brass)}
+.ov-body{overflow:auto;padding:12px;display:grid;gap:12px;align-content:start;min-height:0}
+.ov-foot{border-top:1px solid var(--line);padding:6px 10px;font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px;vertical-align:middle}
+
+.field{display:grid;gap:4px}
+.field label,.lbl{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+select,input[type=text]{background:var(--panel-2);border:1px solid var(--line);border-radius:4px;padding:6px 8px;width:100%}
+.row{display:flex;gap:8px}
+.row>*{flex:1;min-width:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:12px;border:1px solid var(--line);border-radius:12px;padding:1px 9px;background:var(--panel-2)}
+.chip.stage-c{border-color:var(--brass-dim);color:var(--brass)}
+
+/* крафт */
+.goal{background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:10px;display:grid;gap:8px}
+.goal .name{font-weight:600}
+.steps{list-style:none;margin:0;padding:0;display:grid;gap:8px;counter-reset:s}
+.step{display:grid;grid-template-columns:24px 1fr;gap:8px;padding:9px;border:1px solid var(--line);border-radius:5px}
+.step.done{opacity:.5}
+.step input{margin:2px 0 0;accent-color:var(--brass);width:16px;height:16px}
+.step h4{margin:0 0 3px;font-size:13.5px;font-weight:600}
+.step .meta{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12.5px;margin-top:5px}
+.step .meta dt{color:var(--muted)}
+.step .meta dd{margin:0}
+.cur{color:var(--r-currency)}
+.note{font-size:12px;color:var(--muted);border-left:2px solid var(--brass-dim);padding-left:8px}
+
+/* рынок */
+.seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.seg button{flex:1;background:var(--panel-2);border:0;padding:5px 6px;cursor:pointer;font-size:12.5px;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--brass-dim);color:var(--fg)}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl th{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;text-align:left;padding:4px 4px;border-bottom:1px solid var(--line)}
+.tbl td{padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl td.n,.tbl th.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl tr{cursor:pointer}
+.tbl tbody tr:hover{background:var(--panel-2)}
+.tbl tr.sel{background:color-mix(in srgb,var(--brass) 12%,transparent)}
+.iname{font-weight:600}
+.r-unique{color:var(--r-unique)} .r-rare{color:var(--r-rare)} .r-magic{color:var(--r-magic)}
+.pop{display:inline-block;height:5px;border-radius:3px;background:var(--brass);vertical-align:middle}
+.up{color:var(--ok)} .down{color:var(--bad)}
+.detail{background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:10px;display:grid;gap:8px}
+.detail svg{width:100%;height:auto;display:block}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+.sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.stats div{display:grid}
+.stats b{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:14px}
+.stats span{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+
+/* настройки */
+.set{display:grid;grid-template-columns:1fr auto;gap:10px 12px;align-items:center}
+.set .h{grid-column:1/-1;font-family:var(--f-display);color:var(--brass);font-size:14px;margin-top:4px}
+.switch{appearance:none;width:34px;height:18px;border-radius:9px;background:var(--line);position:relative;cursor:pointer;margin:0}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--fg);transition:left .15s}
+.switch:checked{background:var(--brass-dim)}
+.switch:checked::after{left:18px}
+input[type=range]{accent-color:var(--brass);width:120px}
+input[type=password]{background:var(--panel-2);border:1px solid var(--line);border-radius:4px;padding:6px 8px;width:100%;font-family:var(--f-mono)}
+.btn{background:var(--panel-2);border:1px solid var(--line);border-radius:4px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--brass-dim)}
+.btn.primary{background:var(--brass-dim);border-color:var(--brass-dim)}
+.row .btn{flex:0 0 auto}
+.hk{font-family:var(--f-mono);font-size:12px;min-width:118px;text-align:center;background:var(--panel-2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:3px 8px;cursor:pointer}
+.hk.rec{border-color:var(--brass);color:var(--brass)}
+.hk.conflict{border-color:var(--bad);color:var(--bad)}
+.hk.empty{color:var(--muted)}
+.set>label{min-width:0}
+
+/* ===== секции ниже ===== */
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.card{border:1px solid var(--line);border-radius:6px;padding:14px;display:grid;gap:8px;align-content:start;background:var(--panel)}
+.card ul{margin:0;padding-left:18px;display:grid;gap:4px}
+.qs{display:grid;gap:10px;counter-reset:q;margin:0;padding:0;list-style:none}
+.qs li{display:grid;grid-template-columns:34px 1fr;gap:10px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+.qs li::before{counter-increment:q;content:counter(q);font-family:var(--f-display);font-size:20px;color:var(--brass);line-height:1}
+.qs b{display:block;margin-bottom:2px}
+.qs .why{color:var(--muted);font-size:13px}
+.risks{display:grid;gap:8px}
+.risk{display:grid;grid-template-columns:110px 1fr;gap:12px;padding:10px 12px;border-left:3px solid var(--warn);background:var(--panel);border-radius:0 6px 6px 0}
+.risk .k{font-weight:600;color:var(--warn)}
+section{display:grid;gap:14px}
+
+@media (max-width:860px){
+  .cols{grid-template-columns:1fr}
+  .stage{padding:44px 10px 10px;min-height:auto}
+  .hud{display:none}
+  .ov{width:100%}
+  .risk{grid-template-columns:1fr;gap:2px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="tag">Макет · данные примерные</span>
+    <h1 style="margin-top:8px">Exile Forge — оверлей для Path of Exile</h1>
+    <p class="lede">Окно поверх игры по горячей клавише. Три вкладки: пошаговые гайды по крафту, анализ рынка с официального трейда и настройки. Все цены и рецепты ниже — заглушки для оценки интерфейса, не реальные данные.</p>
+  </header>
+
+  <!-- ===== МАКЕТ ===== -->
+  <div class="stage" aria-label="Пример: оверлей поверх окна игры">
+    <div class="hud" aria-hidden="true"><div class="orb life"></div><div class="bar"></div><div class="orb mana"></div></div>
+
+    <div class="ov" id="ov">
+      <div class="ov-head">
+        <span class="logo">Exile Forge</span>
+        <span class="kbd" title="Показать / скрыть">Ctrl+Shift+F</span>
+        <button class="ico" title="Закрепить поверх" aria-label="Закрепить">📌</button>
+        <button class="ico" title="Скрыть" aria-label="Скрыть">✕</button>
+      </div>
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="craft" id="t-craft">Крафт</button>
+        <button role="tab" aria-selected="false" data-tab="market" id="t-market">Рынок</button>
+        <button role="tab" aria-selected="false" data-tab="settings" id="t-settings">Настройки</button>
+      </div>
+
+      <!-- Крафт -->
+      <div class="ov-body" data-panel="craft">
+        <div class="row">
+          <div class="field"><label for="c-slot">Слот</label>
+            <select id="c-slot"></select></div>
+          <div class="field"><label for="c-goal">Цель</label><select id="c-goal"></select></div>
+        </div>
+        <div class="goal" id="c-summary"></div>
+        <ol class="steps" id="c-steps"></ol>
+        <p class="note">В рабочей версии предмет можно будет навести в игре и нажать Ctrl+C: оверлей прочитает базу, уровень предмета и свойства из буфера обмена и сам предложит подходящие рецепты.</p>
+      </div>
+
+      <!-- Рынок -->
+      <div class="ov-body" data-panel="market" hidden>
+        <div class="row">
+          <div class="field"><label for="m-cat">Слот · редкие</label>
+            <select id="m-cat"></select></div>
+          <div class="field"><label for="m-min">Цена от</label>
+            <select id="m-min"><option value="0">любая</option><option value="0.5">0.5 div</option><option value="1">1 div</option><option value="3">3 div</option></select></div>
+        </div>
+        <div class="row" style="align-items:end">
+          <div class="field"><span class="lbl">Сортировка</span>
+            <div class="seg" id="m-sort"><button aria-pressed="true" data-s="score">Популярность × цена</button><button aria-pressed="false" data-s="price">Цена</button><button aria-pressed="false" data-s="listings">Лоты</button></div></div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="tbl" id="m-table">
+            <thead><tr><th>Профиль (база + ключевые моды)</th><th class="n">Медиана</th><th class="n">Лоты</th><th class="n">7д</th><th>Спрос</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="detail" id="m-detail"></div>
+      </div>
+
+      <!-- Настройки -->
+      <div class="ov-body" data-panel="settings" hidden>
+        <div class="set">
+          <div class="h">Игра</div>
+          <label for="s-game">Версия</label>
+          <select id="s-game" style="width:auto"><option>Path of Exile</option><option disabled>Path of Exile 2 (позже)</option></select>
+          <label for="s-league">Лига</label>
+          <select id="s-league" style="width:auto"><option selected>Текущая лига · Softcore</option><option>Текущая лига · Hardcore</option><option>Standard</option><option>Hardcore</option></select>
+          <label for="s-lang">Язык интерфейса</label>
+          <select id="s-lang" style="width:auto"><option value="ru">Русский</option><option value="en">English</option></select>
+
+          <div class="h">Горячие клавиши</div>
+          <div id="s-hk" style="display:contents"></div>
+          <p class="note" id="s-hk-msg" style="grid-column:1/-1">Нажмите на сочетание, затем новые клавиши. Esc отменяет, Backspace снимает назначение. Не занимайте клавиши, которые используются в самой игре.</p>
+
+          <div class="h">Окно</div>
+          <label for="s-op">Непрозрачность</label>
+          <input type="range" id="s-op" min="55" max="100" value="94">
+          <label for="s-click">Клики проходят сквозь окно</label>
+          <input type="checkbox" class="switch" id="s-click">
+          <label for="s-focus">Показывать только когда игра активна</label>
+          <input type="checkbox" class="switch" id="s-focus" checked>
+
+          <div class="h">Аккаунт трейда</div>
+          <label for="s-sess" style="grid-column:1/-1">POESESSID (необязательно)</label>
+          <form class="row sess" id="s-sess-form" style="grid-column:1/-1">
+            <input type="password" id="s-sess" autocomplete="off" placeholder="32 символа из cookie pathofexile.com">
+            <button type="button" class="btn" id="s-sess-show">Показать</button>
+            <button type="submit" class="btn primary">Сохранить</button>
+          </form>
+          <p class="note" id="s-sess-msg" style="grid-column:1/-1">Хранится только на этом компьютере, зашифрованным средствами Windows. Без него поиск работает, но лимиты запросов строже.</p>
+
+          <div class="h">Сканер рынка</div>
+          <label for="s-src">Курсы валют и история цен</label>
+          <select id="s-src" style="width:auto"><option>poe.ninja</option></select>
+          <label for="s-int">Обновление кэша</label>
+          <select id="s-int" style="width:auto"><option>каждые 30 мин</option><option>каждый час</option><option>вручную</option></select>
+          <label for="s-iqr">Отсечение выбросов</label>
+          <select id="s-iqr" style="width:auto"><option>IQR × 1.5 (стандарт)</option><option>IQR × 3 (мягко)</option><option>Перцентили 10–90</option></select>
+          <label for="s-age">Учитывать лоты не старше</label>
+          <select id="s-age" style="width:auto"><option>3 дней</option><option>7 дней</option><option>14 дней</option></select>
+        </div>
+      </div>
+
+      <div class="ov-foot"><span><span class="dot"></span>Трейд API: 4/12 запросов в окне лимита</span><span class="mono">кэш: 14 мин назад</span></div>
+    </div>
+  </div>
+
+  <!-- ===== АРХИТЕКТУРА ===== -->
+  <section>
+    <h2>Как это будет устроено</h2>
+    <div class="cols">
+      <div class="card">
+        <h3>Оверлей</h3>
+        <ul>
+          <li>Electron + TypeScript: прозрачное окно поверх игры, привязанное к её окну (так же работают Awakened PoE Trade и Exiled Exchange 2).</li>
+          <li>Игра подключается отдельным модулем: сейчас PoE 1, позже рядом встанет модуль PoE 2 со своим трейдом, данными и рецептами.</li>
+          <li>Глобальная горячая клавиша, режим «клики насквозь», запоминание позиции.</li>
+          <li>Игра должна быть в режиме <i>Windowed Fullscreen</i>: в эксклюзивном полноэкранном режиме Windows не рисует окна поверх.</li>
+          <li>Чтение предмета через Ctrl+C из игры: одно нажатие — одно действие, это разрешено правилами GGG.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>База крафта</h3>
+        <ul>
+          <li>Рецепты хранятся локально в JSON: цель, база, ilvl, шаги, валюта, станции, этап игры, где фармить.</li>
+          <li>Модификаторы, тиры и веса берутся из открытых выгрузок данных игры (RePoE / данные poedb), чтобы шаги проверялись по реальным пулам аффиксов.</li>
+          <li>Стоимость шагов подтягивается из того же кэша цен, что и вкладка «Рынок».</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Сканер рынка</h3>
+        <ul>
+          <li>Официальный API трейда (search → fetch по 10 лотов), фоновой очередью с соблюдением заголовков лимитов.</li>
+          <li>Цены переводятся в Divine по текущему курсу, лоты одного продавца схлопываются, старые лоты отбрасываются.</li>
+          <li>Выбросы режутся по межквартильному размаху; в таблицу попадает медиана того, что осталось.</li>
+          <li>«Спрос» = число лотов, число разных продавцов и скорость их обновления (продаж трейд не показывает).</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== ОГРАНИЧЕНИЯ ===== -->
+  <section>
+    <h2>Ограничения, которые стоит знать заранее</h2>
+    <div class="risks">
+      <div class="risk"><span class="k">Нет продаж</span><span>Трейд показывает только выставленные лоты, а не сделки. «Популярность» придётся оценивать косвенно: сколько лотов, сколько продавцов, как быстро исчезают и появляются. Точнее работает связка с poe.ninja: там есть история цен и статистика использования предметов в билдах.</span></div>
+      <div class="risk"><span class="k">Лимиты API</span><span>У трейда жёсткие лимиты на частоту запросов и временные баны за превышение. Полный обход категории невозможен, поэтому сканер берёт выборку по каждому предмету и хранит кэш. Запросы должны идти с понятным User-Agent, как просит GGG.</span></div>
+      <div class="risk"><span class="k">Редкие предметы</span><span>Двух одинаковых редких предметов не бывает, поэтому рынок сравнивает «профили»: база + 2–3 ключевых модификатора с тирами. Точность цен напрямую зависит от того, насколько удачно подобраны профили; их список будет расти и уточняться.</span></div>
+      <div class="risk"><span class="k">Актуальность крафта</span><span>Механики крафта меняются каждую лигу. Рецепты нужно версионировать по патчу и обновлять; автоматически «понять» крафт из данных игры нельзя.</span></div>
+    </div>
+  </section>
+
+  <!-- ===== РЕШЕНИЯ ===== -->
+  <section>
+    <h2>Что решили</h2>
+    <div class="cols">
+      <div class="card"><h3>Игра и лига</h3><ul><li>PoE 1, английский клиент.</li><li>PoE 2 подключается позже отдельным модулем.</li><li>Лига выбирается в настройках, по умолчанию текущая Softcore.</li></ul></div>
+      <div class="card"><h3>Предметы</h3><ul><li>Только редкие: уникальные не крафтятся.</li><li>Все слоты: броня, бижутерия, оружие, колчан, флаконы и все виды самоцветов.</li><li>«Популярный» = много лотов у разных продавцов при высокой медиане.</li></ul></div>
+      <div class="card"><h3>Данные и настройки</h3><ul><li>Трейд + poe.ninja.</li><li>Поле POESESSID, хранится локально в зашифрованном виде.</li><li>Все горячие клавиши переназначаются.</li><li>Стек: Electron + TypeScript, установщик .exe.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===== ВОПРОСЫ ===== -->
+  <section>
+    <h2>Осталось уточнить</h2>
+    <ol class="qs">
+      <li><div><b>Как наполнять базу рецептов крафта</b><span class="why">
+        Приложение само не знает, как крафтить предмет: кто-то должен описать методы. Варианты:<br>
+        <b style="display:inline">А.</b> Я вручную пишу готовые рецепты для популярных целей по каждому слоту (как два примера во вкладке «Крафт»). Надёжно, но покрывает только то, что описано.<br>
+        <b style="display:inline">Б.</b> Планировщик: вы выбираете нужные моды, а приложение по данным игры (пулы модов, веса, гарантии эссенций и фоссилий, крафты верстака) подбирает метод и считает примерную стоимость. Покрывает любые цели, но сложнее и дольше.<br>
+        <b style="display:inline">В.</b> Гибрид (рекомендую): шаблоны методов пишу я, а приложение подставляет в них конкретные моды и цены. Профили с вкладки «Рынок» сразу ведут в план крафта.</span></div></li>
+      <li><div><b>Node.js и Git</b><span class="why">Node.js нужен, чтобы собирать приложение; готовому .exe он не нужен. Git не обязателен, но с ним можно откатить любое изменение. Могу дать команды установки через winget или установить сам с вашего разрешения.</span></div></li>
+    </ol>
+  </section>
+</div>
+
+<script>
+/* ---------- вкладки ---------- */
+function showTab(name){
+  document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x.dataset.tab===name));
+  document.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==name);
+}
+document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
+
+/* ---------- слоты ---------- */
+const SLOTS=[['Броня',[['helmet','Шлем'],['body','Нательная броня'],['gloves','Перчатки'],['boots','Обувь'],['shield','Щит']]],
+  ['Бижутерия',[['amulet','Амулет'],['ring','Кольцо'],['belt','Пояс']]],
+  ['Оружие',[['weapon1','Одноручное оружие'],['weapon2','Двуручное оружие'],['quiver','Колчан']]],
+  ['Самоцветы',[['jewel','Самоцвет'],['abyss','Абиссальный самоцвет'],['cluster','Кластерный самоцвет']]],
+  ['Флаконы',[['flask','Флакон']]]];
+const slotOpts=SLOTS.map(([g,a])=>`<optgroup label="${g}">${a.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</optgroup>`).join('');
+document.getElementById('c-slot').innerHTML=slotOpts;document.getElementById('c-slot').value='body';
+document.getElementById('m-cat').innerHTML=slotOpts;document.getElementById('m-cat').value='body';
+document.getElementById('s-op').addEventListener('input',e=>document.getElementById('ov').style.setProperty('--op',e.target.value));
+
+/* ---------- крафт (пример данных) ---------- */
+const RECIPES={
+  body:[{
+    id:'greed', name:'Жизнь + два сопротивления', base:'Vaal Regalia / Astral Plate, ilvl 84+',
+    stage:'Ранние карты (база) · T14+ для ilvl 84', cost:'≈ 1–3 div', method:'Эссенции + верстак',
+    steps:[
+      {t:'Достать базу нужного уровня',d:'Чем выше ilvl, тем выше доступные тиры модификаторов.',cur:'—',st:'—',farm:'Карты T14+ или покупка на трейде (дёшево)'},
+      {t:'Очистить предмет до белого',d:'Если база уже с модификаторами.',cur:'Orb of Scouring ×1',st:'Инвентарь',farm:'Обычный дроп'},
+      {t:'Спамить эссенцию до двух хороших сопротивлений',d:'Эссенция гарантирует жизнь; ждём два сопротивления в суффиксах.',cur:'Deafening Essence of Greed ×15–40',st:'Инвентарь',farm:'Механика Essence в картах; 3 эссенции одного тира → 1 следующего'},
+      {t:'Докрафтить свободный суффикс',d:'Добавить третье сопротивление.',cur:'Валюта по цене верстака',st:'Верстак в убежище',farm:'—'},
+      {t:'Связать 6 гнёзд (опционально)',d:'Гарантированный 6L через верстак.',cur:'Orb of Fusing ×1500',st:'Верстак в убежище',farm:'Обычный дроп, обмен у продавцов'}
+    ]}],
+  boots:[{
+    id:'ms', name:'30% скорости + жизнь + сопротивления', base:'Two-Toned Boots, ilvl 86',
+    stage:'Акты 6–10 → ранние карты', cost:'≈ 0.5–1 div', method:'Alteration + Regal + верстак',
+    steps:[
+      {t:'Купить или найти базу',d:'Two-Toned Boots дают два сопротивления имплиситом.',cur:'—',st:'—',farm:'Трейд'},
+      {t:'Сделать магической и катать на скорость',d:'Ждём префикс 30% скорости передвижения.',cur:'Orb of Transmutation ×1, Orb of Alteration ×100–300, Orb of Augmentation по ситуации',st:'Инвентарь',farm:'Обычный дроп'},
+      {t:'Сделать редкой',d:'Добавит один случайный модификатор.',cur:'Regal Orb ×1',st:'Инвентарь',farm:'Обычный дроп'},
+      {t:'Добавить жизнь или сопротивление на верстаке',d:'В зависимости от свободного слота.',cur:'Валюта по цене верстака',st:'Верстак в убежище',farm:'—'}
+    ]}],
+  jewel:[{
+    id:'jlife', name:'% жизни + два атакующих мода', base:'Cobalt / Crimson / Viridian Jewel',
+    stage:'Карты, любая сложность', cost:'≈ 0.3–2 div', method:'Alteration + Regal',
+    steps:[
+      {t:'Сделать самоцвет магическим',d:'Подойдёт любой белый самоцвет нужного цвета.',cur:'Orb of Transmutation ×1',st:'Инвентарь',farm:'Обычный дроп'},
+      {t:'Катать до двух нужных модов',d:'Например % максимальной жизни + множитель крит. урона.',cur:'Orb of Alteration ×50–400, Orb of Augmentation',st:'Инвентарь',farm:'Обычный дроп'},
+      {t:'Сделать редким',d:'Третий мод случайный; если он полезный, самоцвет сильно дороже.',cur:'Regal Orb ×1',st:'Инвентарь',farm:'Обычный дроп'},
+      {t:'Добавить четвёртый мод (опционально)',d:'Только если первые три удачные.',cur:'Exalted Orb ×1',st:'Инвентарь',farm:'Обычный дроп, обмен'}
+    ]}]
+};
+const cSlot=document.getElementById('c-slot'),cGoal=document.getElementById('c-goal');
+function fillGoals(){
+  const list=RECIPES[cSlot.value]||[];
+  cGoal.disabled=!list.length;
+  cGoal.innerHTML=list.length?list.map(r=>`<option value="${r.id}">${r.name}</option>`).join(''):'<option>нет рецептов</option>';
+  renderRecipe();
+}
+function renderRecipe(){
+  const r=(RECIPES[cSlot.value]||[]).find(x=>x.id===cGoal.value);
+  if(!r){document.getElementById('c-summary').innerHTML=`<div class="name">Рецептов для этого слота в макете нет</div><div class="muted" style="font-size:12.5px">В приложении здесь будут рецепты для каждого слота. В макете есть примеры для нательной брони, обуви и самоцветов.</div>`;document.getElementById('c-steps').innerHTML='';return;}
+  document.getElementById('c-summary').innerHTML=`<div class="name">${r.name}</div><div class="muted" style="font-size:12.5px">База: ${r.base}</div>
+  <div class="chips"><span class="chip stage-c">Этап: ${r.stage}</span><span class="chip">${r.method}</span><span class="chip mono">${r.cost}</span></div>`;
+  document.getElementById('c-steps').innerHTML=r.steps.map((s,i)=>`<li class="step"><input type="checkbox" id="st${i}" aria-label="Шаг ${i+1} выполнен"><div><h4>${i+1}. ${s.t}</h4><div class="muted" style="font-size:12.5px">${s.d}</div>
+   <dl class="meta"><dt>Валюта</dt><dd class="cur">${s.cur}</dd><dt>Где</dt><dd>${s.st}</dd><dt>Фарм</dt><dd>${s.farm}</dd></dl></div></li>`).join('');
+  document.querySelectorAll('#c-steps input').forEach(c=>c.addEventListener('change',()=>c.closest('.step').classList.toggle('done',c.checked)));
+}
+cSlot.addEventListener('change',fillGoals);cGoal.addEventListener('change',renderRecipe);fillGoals();
+
+/* ---------- рынок (сгенерированный пример) ---------- */
+let seed=7;const rnd=()=>{seed=(seed*16807)%2147483647;return (seed-1)/2147483646};
+function sample(median,n){
+  const a=[];for(let i=0;i<n;i++){const z=(rnd()+rnd()+rnd()-1.5)*0.35;a.push(median*Math.exp(z));}
+  const k=Math.max(2,Math.round(n*.08));for(let i=0;i<k;i++)a.push(median*(4+rnd()*20));  // завышенные
+  for(let i=0;i<Math.max(1,Math.round(n*.04));i++)a.push(median*(0.05+rnd()*.15)); // price-fix
+  return a;
+}
+/* [профиль, база, медиана div, лотов, тренд %, id рецепта] — выдуманные числа */
+const MARKET={
+  helmet:[['Жизнь + 2× сопр. + аура-энчант','Hubris Circlet',2.2,48,3],['ES T1 + сопр. хаосу','Lion Pelt',1.3,60,-2]],
+  body:[['Жизнь T1 + 2× сопр. T1','Astral Plate ilvl 86',3.5,42,4,'greed'],['ES T1 + 2× сопр.','Vaal Regalia ilvl 86',2.8,55,-1,'greed'],['Жизнь + спелл-суппресс 20%+','Assassin\'s Garb',4.1,36,7]],
+  gloves:[['Жизнь + 2× сопр. + скорость атаки','Spiked Gloves',1.8,51,2],['ES + крит. мульти','Sorcerer Gloves',2.6,33,6]],
+  boots:[['30% скорости + жизнь + 2× сопр.','Two-Toned Boots',1.2,95,1,'ms'],['35% скорости + спелл-суппресс','Two-Toned Boots',5.5,22,9,'ms']],
+  shield:[['+1 к уровню гемов + ES','Titanium Spirit Shield',2.9,30,-3],['Жизнь + блок + 2× сопр.','Archon Kite Shield',0.9,64,0]],
+  amulet:[['+1 ко всем гемам + жизнь','Onyx Amulet',6.5,20,5],['Крит. мульти + жизнь + 2× сопр.','Marble Amulet',2.0,58,1]],
+  ring:[['Жизнь + 3× сопр.','Amethyst Ring',0.8,140,-1],['Жизнь + физ. урон + точность','Vermillion Ring',1.4,77,3]],
+  belt:[['Жизнь + 2× сопр. + сила','Stygian Vise',1.6,88,2],['Жизнь + 3 сопр.','Heavy Belt',0.4,170,-2]],
+  weapon1:[['Спелл-дамаг + крит. + +1 гемы','Imbued Wand',3.8,40,4],['pDPS 450+','Jewelled Foil',2.4,35,-4]],
+  weapon2:[['pDPS 650+','Reaver Axe',3.1,28,2],['+2 гема заклинаний','Eclipse Staff',4.4,24,8]],
+  quiver:[['Жизнь + +1 стрела + крит.','Broadhead Arrow Quiver',3.0,30,3]],
+  jewel:[['% жизни + крит. мульти + урон','Cobalt Jewel',1.5,90,2,'jlife'],['% жизни + 2 атакующих мода','Crimson Jewel',0.9,130,-1,'jlife']],
+  abyss:[['Жизнь + 2 мода урона','Murderous Eye Jewel',1.1,66,1]],
+  cluster:[['8 пассивов, 2 нужных notable','Large Cluster Jewel',4.8,45,6],['Малый: жизнь + notable','Small Cluster Jewel',0.7,110,0]],
+  flask:[['Ртутный: иммун. к кровотечению + +% скорости','Quicksilver Flask',0.35,150,0],['Гранитный: увеличенная длительность','Granite Flask',0.2,120,-2]],
+};
+let sortKey='score',selIdx=0,rows=[];
+function q(a,p){const s=[...a].sort((x,y)=>x-y),i=(s.length-1)*p,lo=Math.floor(i);return s[lo]+(s[Math.min(lo+1,s.length-1)]-s[lo])*(i-lo);}
+function analyse([name,base,med,n,tr,recipe]){
+  const prices=sample(med,n),q1=q(prices,.25),q3=q(prices,.75),iqr=q3-q1,lo=q1-1.5*iqr,hi=q3+1.5*iqr;
+  const kept=prices.filter(p=>p>=Math.max(lo,0)&&p<=hi);
+  const sellers=Math.round(kept.length*(.7+rnd()*.2));
+  return {name,base,recipe,prices,lo:Math.max(lo,0),hi,kept,median:q(kept,.5),q1:q(kept,.25),q3:q(kept,.75),n:kept.length,cut:prices.length-kept.length,sellers,tr};
+}
+function fmt(v){return v>=10?v.toFixed(0):v>=1?v.toFixed(1):v.toFixed(2)}
+function renderMarket(){
+  seed=7;const key=document.getElementById('m-cat').value,min=+document.getElementById('m-min').value;
+  const rar='rare';
+  const src=MARKET[key]||[];const tb=document.querySelector('#m-table tbody');
+  rows=src.map(analyse).filter(r=>r.median>=min);
+  if(!rows.length){tb.innerHTML=`<tr><td colspan="5" class="muted" style="cursor:default">Нет профилей с такой ценой. Снизьте порог «Цена от».</td></tr>`;document.getElementById('m-detail').innerHTML='';return;}
+  const maxL=Math.max(...rows.map(r=>r.n));
+  rows.forEach(r=>{r.pop=(r.n/maxL)*.6+(r.sellers/r.n)*.4;r.score=r.pop*Math.log10(1+r.median*10);});
+  rows.sort((a,b)=>sortKey==='price'?b.median-a.median:sortKey==='listings'?b.n-a.n:b.score-a.score);
+  selIdx=Math.min(selIdx,rows.length-1);
+  tb.innerHTML=rows.map((r,i)=>`<tr class="${i===selIdx?'sel':''}" data-i="${i}"><td><div class="iname r-${rar}">${r.name}</div><div class="muted" style="font-size:11.5px">${r.base}</div></td>
+    <td class="n">${fmt(r.median)} div</td><td class="n">${r.n}</td><td class="n ${r.tr>0?'up':r.tr<0?'down':''}">${r.tr>0?'+':''}${r.tr}%</td>
+    <td><span class="pop" style="width:${Math.round(r.pop*56)}px"></span></td></tr>`).join('');
+  tb.querySelectorAll('tr[data-i]').forEach(tr=>tr.addEventListener('click',()=>{selIdx=+tr.dataset.i;renderMarket();}));
+  renderDetail(rows[selIdx],rar);
+}
+function renderDetail(r,rar){
+  const W=400,H=120,P=22,bins=24;
+  const lmin=Math.log(Math.min(...r.prices)),lmax=Math.log(Math.max(...r.prices));
+  const bw=(lmax-lmin)/bins,cnt=new Array(bins).fill(0),out=new Array(bins).fill(0);
+  r.prices.forEach(p=>{const b=Math.min(bins-1,Math.floor((Math.log(p)-lmin)/bw));(p<r.lo||p>r.hi?out:cnt)[b]++;});
+  const m=Math.max(...cnt.map((c,i)=>c+out[i]));const x=v=>P+(Math.log(v)-lmin)/(lmax-lmin)*(W-2*P);
+  const barW=(W-2*P)/bins-1;let bars='';
+  for(let i=0;i<bins;i++){const bx=P+i*(W-2*P)/bins,h1=cnt[i]/m*(H-34),h2=out[i]/m*(H-34);
+    if(cnt[i])bars+=`<rect x="${bx}" y="${H-18-h1}" width="${barW}" height="${h1}" fill="var(--brass)"/>`;
+    if(out[i])bars+=`<rect x="${bx}" y="${H-18-h2}" width="${barW}" height="${h2}" fill="var(--bad)" opacity=".55"/>`;}
+  const mx=x(r.median);
+  document.getElementById('m-detail').innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><span class="iname r-${rar}">${r.name}</span><span class="muted" style="font-size:11.5px">распределение цен, лог-шкала</span></div>
+  <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Гистограмма цен">
+    <line x1="${P}" y1="${H-18}" x2="${W-P}" y2="${H-18}" stroke="var(--line)"/>${bars}
+    <line x1="${mx}" y1="8" x2="${mx}" y2="${H-18}" stroke="var(--fg)" stroke-dasharray="3 3"/>
+    <text x="${mx}" y="8" fill="var(--fg)" font-size="10" text-anchor="middle" dy="-0" font-family="JetBrains Mono, monospace">медиана ${fmt(r.median)}</text>
+    <text x="${P}" y="${H-4}" fill="var(--muted)" font-size="10" font-family="JetBrains Mono, monospace">${fmt(Math.min(...r.prices))}</text>
+    <text x="${W-P}" y="${H-4}" fill="var(--muted)" font-size="10" text-anchor="end" font-family="JetBrains Mono, monospace">${fmt(Math.max(...r.prices))} div</text>
+  </svg>
+  <div class="legend"><span><i class="sw" style="background:var(--brass)"></i>учтено (${r.n})</span><span><i class="sw" style="background:var(--bad);opacity:.55"></i>выбросы отброшены (${r.cut})</span></div>
+  <div class="stats"><div><b>${fmt(r.q1)}</b><span>25-й перц.</span></div><div><b>${fmt(r.median)}</b><span>медиана</span></div><div><b>${fmt(r.q3)}</b><span>75-й перц.</span></div><div><b>${r.sellers}</b><span>продавцов</span></div></div>
+  <div><button class="btn primary" id="m-go">Как скрафтить →</button></div>`;
+  document.getElementById('m-go').addEventListener('click',()=>{
+    cSlot.value=document.getElementById('m-cat').value;fillGoals();
+    if(r.recipe){cGoal.value=r.recipe;renderRecipe();}
+    showTab('craft');
+  });
+}
+['m-cat','m-min'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{selIdx=0;renderMarket();}));
+document.querySelectorAll('#m-sort button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#m-sort button').forEach(x=>x.setAttribute('aria-pressed',x===b));sortKey=b.dataset.s;selIdx=0;renderMarket();}));
+renderMarket();
+
+/* ---------- горячие клавиши ---------- */
+const HK=[['toggle','Показать / скрыть оверлей','Ctrl+Shift+F'],
+  ['read','Прочитать предмет под курсором и открыть крафт','Ctrl+D'],
+  ['price','Оценить предмет под курсором на рынке','Ctrl+Alt+D'],
+  ['click','Включить / выключить клики насквозь','Ctrl+Shift+T'],
+  ['step','Отметить следующий шаг крафта','Ctrl+Shift+N'],
+  ['tab','Следующая вкладка оверлея','Ctrl+Tab']];
+let recording=null;
+function renderHK(){
+  const counts={};HK.forEach(h=>{if(h[2])counts[h[2]]=(counts[h[2]]||0)+1;});
+  document.getElementById('s-hk').innerHTML=HK.map(([id,label,combo])=>`<label for="hk-${id}">${label}</label>
+    <button type="button" class="hk${recording===id?' rec':''}${combo&&counts[combo]>1?' conflict':''}${!combo?' empty':''}" id="hk-${id}" data-id="${id}">${recording===id?'Нажмите клавиши…':(combo||'не назначено')}</button>`).join('');
+  document.querySelectorAll('#s-hk .hk').forEach(b=>b.addEventListener('click',()=>{recording=b.dataset.id;renderHK();document.getElementById('hk-'+recording).focus();}));
+  const dup=Object.keys(counts).filter(k=>counts[k]>1);
+  const msg=document.getElementById('s-hk-msg');
+  msg.style.borderLeftColor=dup.length?'var(--bad)':'';
+  msg.textContent=dup.length?`Сочетание ${dup.join(', ')} назначено нескольким действиям. Измените одно из них.`:'Нажмите на сочетание, затем новые клавиши. Esc отменяет, Backspace снимает назначение. Не занимайте клавиши, которые используются в самой игре.';
+  document.querySelector('.ov-head .kbd').textContent=HK[0][2]||'—';
+}
+document.addEventListener('keydown',e=>{
+  if(!recording)return;
+  e.preventDefault();
+  const h=HK.find(x=>x[0]===recording);
+  if(e.key==='Escape'){recording=null;renderHK();return;}
+  if(e.key==='Backspace'){h[2]='';recording=null;renderHK();return;}
+  if(['Control','Shift','Alt','Meta'].includes(e.key))return;
+  let k=e.code.startsWith('Key')?e.code.slice(3):e.code.startsWith('Digit')?e.code.slice(5):e.key.length===1?e.key.toUpperCase():e.key;
+  const mods=[e.ctrlKey&&'Ctrl',e.altKey&&'Alt',e.shiftKey&&'Shift'].filter(Boolean);
+  if(!mods.length&&!/^F\d+$/.test(k))return; // без модификатора — только F-клавиши
+  h[2]=[...mods,k].join('+');recording=null;renderHK();
+});
+renderHK();
+
+/* ---------- язык интерфейса (в макете переводится только «рамка» оверлея) ---------- */
+const EN={'Крафт':'Craft','Рынок':'Market','Настройки':'Settings','Слот':'Slot','Цель':'Goal','Слот · редкие':'Slot · rares','Цена от':'Min price','любая':'any',
+ 'Сортировка':'Sort','Популярность × цена':'Popularity × price','Цена':'Price','Лоты':'Listings','Профиль (база + ключевые моды)':'Profile (base + key mods)',
+ 'Медиана':'Median','7д':'7d','Спрос':'Demand','Игра':'Game','Версия':'Version','Лига':'League','Язык интерфейса':'Interface language',
+ 'Текущая лига · Softcore':'Current league · Softcore','Текущая лига · Hardcore':'Current league · Hardcore','Path of Exile 2 (позже)':'Path of Exile 2 (later)',
+ 'Горячие клавиши':'Hotkeys','Окно':'Window','Непрозрачность':'Opacity','Клики проходят сквозь окно':'Click-through','Показывать только когда игра активна':'Show only while the game is focused',
+ 'Аккаунт трейда':'Trade account','POESESSID (необязательно)':'POESESSID (optional)','Показать':'Show','Скрыть':'Hide','Сохранить':'Save',
+ 'Сканер рынка':'Market scanner','Курсы валют и история цен':'Currency rates and price history','Обновление кэша':'Cache refresh','Отсечение выбросов':'Outlier filter','Учитывать лоты не старше':'Ignore listings older than',
+ 'Показать / скрыть оверлей':'Show / hide overlay','Прочитать предмет под курсором и открыть крафт':'Read hovered item and open Craft','Оценить предмет под курсором на рынке':'Price-check hovered item',
+ 'Включить / выключить клики насквозь':'Toggle click-through','Отметить следующий шаг крафта':'Mark next craft step done','Следующая вкладка оверлея':'Next overlay tab',
+ 'не назначено':'not set','Нажмите клавиши…':'Press keys…','Как скрафтить →':'How to craft →','Броня':'Armour','Бижутерия':'Jewellery','Оружие':'Weapons','Самоцветы':'Jewels','Флаконы':'Flasks',
+ 'Шлем':'Helmet','Нательная броня':'Body armour','Перчатки':'Gloves','Обувь':'Boots','Щит':'Shield','Амулет':'Amulet','Кольцо':'Ring','Пояс':'Belt',
+ 'Одноручное оружие':'One-hand weapon','Двуручное оружие':'Two-hand weapon','Колчан':'Quiver','Самоцвет':'Jewel','Абиссальный самоцвет':'Abyss jewel','Кластерный самоцвет':'Cluster jewel','Флакон':'Flask'};
+let lang='ru';
+function applyLang(){
+  document.querySelectorAll('#ov label, #ov .h, #ov .tabs button, #ov th, #ov .lbl, #ov .seg button, #ov option, #ov .hk, #ov .btn').forEach(el=>{
+    if(el.children.length)return;
+    if(!el.dataset.ru)el.dataset.ru=el.textContent;
+    el.textContent=lang==='en'?(EN[el.dataset.ru]||el.dataset.ru):el.dataset.ru;
+  });
+  document.querySelectorAll('#ov optgroup').forEach(g=>{if(!g.dataset.ru)g.dataset.ru=g.label;g.label=lang==='en'?(EN[g.dataset.ru]||g.dataset.ru):g.dataset.ru;});
+}
+document.getElementById('s-lang').addEventListener('change',e=>{lang=e.target.value;applyLang();});
+const _renderHK=renderHK;renderHK=function(){_renderHK();applyLang();};
+const _renderMarket=renderMarket;renderMarket=function(){_renderMarket();applyLang();};
+
+/* ---------- POESESSID (в макете ничего не сохраняется) ---------- */
+document.getElementById('s-sess-show').addEventListener('click',e=>{
+  const i=document.getElementById('s-sess');i.type=i.type==='password'?'text':'password';e.target.textContent=i.type==='password'?'Показать':'Скрыть';});
+document.getElementById('s-sess-form').addEventListener('submit',e=>{
+  e.preventDefault();const v=document.getElementById('s-sess').value.trim(),m=document.getElementById('s-sess-msg');
+  m.textContent=/^[0-9a-f]{32}$/i.test(v)?'Формат верный. В приложении ключ сохранится локально в зашифрованном виде; в этом макете он никуда не сохраняется.':v?'POESESSID — это 32 шестнадцатеричных символа. Проверьте, что скопировали значение cookie целиком.':'Поле пустое. Без POESESSID приложение тоже работает.';
+});
+</script>
