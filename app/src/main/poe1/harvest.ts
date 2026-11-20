@@ -1,6 +1,8 @@
 /**
  * Стоимость крафтов Horticrafting Station (Harvest) в Crystallised Lifeforce.
- * Источник: https://poedb.tw/us/Horticrafting (снимок от 20.11.2026; дата таблицы на странице не указана).
+ * Источники: https://poedb.tw/us/Horticrafting и https://www.poewiki.net/wiki/Harvest_crafting (сверено 20.11.2026, версия 3.30).
+ * Таблицы совпадают; в основной таблице вики смена типа сопротивления/урона ещё по старой цене (500 одного цвета),
+ * а в её же истории изменений 3.30 и на poedb — 300 + 300 двух цветов (исходного и целевого), берём её.
  * Rancour — Crystallised Rancour, отдельная валюта.
  */
 import { app } from 'electron'
@@ -29,7 +31,8 @@ export const HARVEST_REFORGE: Record<string, { label: string; cost: HarvestCost 
   minion: { label: 'Minion', cost: { parts: [{ lf: 'Primal', n: 200 }], rancour: 3 } },
   elemental: { label: 'Elemental', cost: { parts: [{ lf: 'Wild', n: 200 }], rancour: 1 } },
   attribute: { label: 'Attribute', cost: { parts: [{ lf: 'Vivid', n: 200 }], rancour: 2 } },
-  mana: { label: 'Mana', cost: { parts: [{ lf: 'Primal', n: 200 }], rancour: 2 } }
+  mana: { label: 'Mana', cost: { parts: [{ lf: 'Primal', n: 200 }], rancour: 2 } },
+  drop: { label: 'Drop', cost: { parts: [{ lf: 'Vivid', n: 200 }], rancour: 1 } }
 }
 
 /** «Add a new <Tag> modifier and remove another random modifier from a non-Influenced item». */
@@ -47,7 +50,10 @@ export const HARVEST_AUGMENT: Record<string, { label: string; cost: HarvestCost 
   critical: { label: 'Critical', cost: { parts: [{ lf: 'Primal', n: 20000 }, { lf: 'Sacred', n: 1 }] } }
 }
 
-/** «Change a modifier that grants <A> Resistance into a similar-tier modifier that grants <B> Resistance»: 300 + 300 лайфорса двух цветов. */
+/**
+ * «Change a modifier that grants <A> Resistance/Damage into a similar-tier modifier that grants <B> …»: 300 лайфорса цвета A + 300 цвета B
+ * (огонь — Wild, холод — Primal, молния — Vivid); смена типа урона — ещё 1 Crystallised Rancour.
+ */
 export const RES_LIFEFORCE: Record<'Fire' | 'Cold' | 'Lightning', Lifeforce> = { Fire: 'Wild', Cold: 'Primal', Lightning: 'Vivid' }
 
 export const lifeforceName = (lf: Lifeforce) => `${lf} Crystallised Lifeforce`
@@ -57,15 +63,24 @@ export interface HarvestTables {
   source: string
   reforge: Record<string, { label: string; cost: HarvestCost }>
   augment: Record<string, { label: string; cost: HarvestCost }>
-  /** лайфорса каждого из двух цветов на смену типа сопротивления */
+  /** лайфорса каждого из двух цветов на смену типа сопротивления или урона */
   resChange: number
+  /** Crystallised Rancour на смену типа урона */
+  dmgChangeRancour: number
+  /** «Reforge a Rare item, being more/less likely to receive the same modifier types» */
+  similar: HarvestCost
+  /** «Reforge an Influenced Rare item with random modifiers, including a Influence modifier» */
+  influenced: HarvestCost
 }
 
 const DEFAULTS: HarvestTables = {
-  source: 'poedb.tw/us/Horticrafting, 20.11.2026',
+  source: 'poedb.tw/us/Horticrafting + poewiki Harvest crafting, 3.30, 20.11.2026',
   reforge: HARVEST_REFORGE,
   augment: HARVEST_AUGMENT,
-  resChange: 300
+  resChange: 300,
+  dmgChangeRancour: 1,
+  similar: { parts: [{ lf: 'Wild', n: 200 }] },
+  influenced: { parts: [{ lf: 'Primal', n: 5000 }, { lf: 'Sacred', n: 1 }] }
 }
 
 /** Файл с таблицей, который можно править руками, если GGG поменяет стоимость. */
@@ -76,7 +91,7 @@ export function loadHarvest(): HarvestTables {
   try {
     if (!existsSync(f)) writeFileSync(f, JSON.stringify(DEFAULTS, null, 2), 'utf-8')
     const raw = JSON.parse(readFileSync(f, 'utf-8')) as Partial<HarvestTables>
-    return { ...DEFAULTS, ...raw, reforge: { ...DEFAULTS.reforge, ...(raw.reforge ?? {}) }, augment: { ...DEFAULTS.augment, ...(raw.augment ?? {}) } }
+    return { ...DEFAULTS, ...raw, source: DEFAULTS.source, reforge: { ...DEFAULTS.reforge, ...(raw.reforge ?? {}) }, augment: { ...DEFAULTS.augment, ...(raw.augment ?? {}) } }
   } catch {
     return DEFAULTS
   }

@@ -181,8 +181,8 @@ const ru = {
   'set.opacity': 'Непрозрачность',
   'set.clickThrough': 'Клики проходят сквозь окно',
 
-  'set.onlyFocused': 'Показывать только когда игра активна',
-  'set.onlyFocusedSub': 'оверлей прячется, когда вы переключаетесь из игры в другое окно',
+  'set.onlyFocused': 'Показывать только поверх игры',
+  'set.onlyFocusedSub': 'оверлей прячется, когда на его мониторе поверх Path of Exile открыто другое окно',
   'set.notify': 'Уведомления',
   'set.notifyOn': 'Уведомлять о выгодных крафтах',
   'set.notifySub': 'фоновая проверка избранных (☆) профилей рынка; уведомление, если маржа от 30%',
@@ -429,8 +429,8 @@ const en: Record<Key, string> = {
   'set.opacity': 'Opacity',
   'set.clickThrough': 'Click-through',
 
-  'set.onlyFocused': 'Show only while the game is focused',
-  'set.onlyFocusedSub': 'the overlay hides when you switch from the game to another window',
+  'set.onlyFocused': 'Show only over the game',
+  'set.onlyFocusedSub': 'the overlay hides when another window covers Path of Exile on its monitor',
   'set.notify': 'Notifications',
   'set.notifyOn': 'Notify about profitable crafts',
   'set.notifySub': 'background check of favourite (☆) market profiles; notifies when margin is 30%+',

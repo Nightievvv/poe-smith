@@ -1,7 +1,7 @@
 {
   "name": "poe-smith",
   "productName": "PoESmith",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "PoESmith: Path of Exile crafting and market overlay",
   "main": "out/main/index.js",

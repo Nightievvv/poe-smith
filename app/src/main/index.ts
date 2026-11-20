@@ -18,7 +18,7 @@ import { currencyIcons } from './poe1/icons'
 import { getCached, scan } from './poe1/market'
 import { getRates } from './poe1/ninja'
 import { limits } from './poe1/trade'
-import { foregroundTitle, isGameTitle } from './poe1/focus'
+import { hwndOf, isGameTitle, visibleTitleAt } from './poe1/focus'
 import { addFromPriceCheck, removeCustom } from './poe1/customprofiles'
 import { addJournal, listJournal, removeJournal, updateJournal } from './journal'
 import { checkNow, startWatcher, type WatcherDeps } from './watcher'
@@ -82,7 +82,20 @@ function watchFocus() {
   setInterval(() => {
     if (!settings.onlyWhenGameFocused || !win) return
     const ours = win.isFocused() || !!pcWin?.isFocused()
-    const game = ours || isGameTitle(foregroundTitle())
+    // что видно на мониторе оверлея: игра — показываем; другое приложение поверх игры — прячем
+    // (клик по окну на другом мониторе оверлей не прячет, пока на его мониторе по-прежнему игра)
+    let game = ours
+    if (!ours) {
+      try {
+        const disp = screen.getDisplayMatching(win.getBounds())
+        const c = screen.dipToScreenPoint({ x: disp.bounds.x + disp.bounds.width / 2, y: disp.bounds.y + disp.bounds.height / 2 })
+        const mine = [win, pcWin].filter((w): w is BrowserWindow => !!w && !w.isDestroyed()).map((w) => hwndOf(w.getNativeWindowHandle()))
+        const t = visibleTitleAt(Math.round(c.x), Math.round(c.y), mine)
+        game = t != null && isGameTitle(t)
+      } catch {
+        game = true
+      }
+    }
     for (const [w, wanted] of [[win, userVisible], [pcWin, pcVisible]] as const) {
       if (!w || w.isDestroyed()) continue
       if (wanted && game && !w.isVisible()) w.showInactive()

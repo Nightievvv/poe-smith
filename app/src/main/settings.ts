@@ -27,7 +27,7 @@ export function defaultSettings(): Settings {
     maxAgeDays: 7,
     marketMin: { value: 0, currency: 'divine' },
     customPrices: {},
-    onlyWhenGameFocused: false,
+    onlyWhenGameFocused: true,
     favorites: [],
     // уведомления о выгодных крафтах — по желанию, по умолчанию выключены
     notify: false,
@@ -45,6 +45,8 @@ export function loadSettings(): Settings {
     if ((raw.v ?? 1) < 2 && raw.hotkeys?.read === 'Ctrl+D' && raw.hotkeys?.price === 'Ctrl+Alt+D') {
       raw.hotkeys = { ...raw.hotkeys, read: 'Ctrl+Alt+D', price: 'Ctrl+D' }
     }
+    // миграция v3: оверлей показывается только поверх игры — теперь это поведение по умолчанию
+    if ((raw.v ?? 1) < 3) raw.onlyWhenGameFocused = true
     return {
       ...def,
       ...raw,
@@ -59,7 +61,7 @@ export function loadSettings(): Settings {
 
 export function writeSettings(s: Settings): void {
   mkdirSync(dir(), { recursive: true })
-  writeFileSync(settingsPath(), JSON.stringify({ ...s, v: 2 }, null, 2), 'utf-8')
+  writeFileSync(settingsPath(), JSON.stringify({ ...s, v: 3 }, null, 2), 'utf-8')
 }
 
 // ---------- POESESSID: хранится только локально, зашифрован средствами Windows (DPAPI) ----------
