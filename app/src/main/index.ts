@@ -1,18 +1,20 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } from 'electron'
 import { join } from 'path'
+import { cpSync, existsSync, mkdirSync } from 'fs'
 import { loadSettings, writeSettings, hasSession, setSession, clearSession } from './settings'
 import { fetchLeagues } from './leagues'
 import {
   HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type Lang, type MarketQuery, type OverlayEvent, type ParsedItem, type PcFilter,
-  type PriceCheckState, type Settings, type ValueEstimate, type JournalEntry
+  type PriceCheckState, type Settings, type ValueEstimate, type JournalEntry, type CraftPlanOptions
 } from '../shared/types'
 import { parseItem } from '../shared/poe1/item'
 import { copyItemText } from './poe1/copy'
-import { defaultFilters, pcSearch } from './poe1/pricecheck'
+import { defaultFilters, pcMore, pcSearch } from './poe1/pricecheck'
 import { buildPlan } from './poe1/planner'
 import { basePrice } from './poe1/baseprice'
 import { harvestFile, resetHarvest } from './poe1/harvest'
 import { craftStatus, onCraftStatus } from './poe1/craftdata'
+import { currencyIcons } from './poe1/icons'
 import { getCached, scan } from './poe1/market'
 import { getRates } from './poe1/ninja'
 import { limits } from './poe1/trade'
@@ -21,11 +23,30 @@ import { addFromPriceCheck, removeCustom } from './poe1/customprofiles'
 import { addJournal, listJournal, removeJournal, updateJournal } from './journal'
 import { checkNow, startWatcher, type WatcherDeps } from './watcher'
 import { appIcon, createTray } from './tray'
+import { checkForUpdates, downloadUpdate, initUpdater, installUpdate, updateState } from './updater'
 
 let win: BrowserWindow | null = null
 let settings: Settings
 
+migrateUserData()
 if (!app.requestSingleInstanceLock()) app.quit()
+
+/**
+ * Приложение переименовано из «Exile Forge» в «PoESmith», а с ним сменилась папка %APPDATA%.
+ * При первом запуске переносим настройки, кэш, журнал и данные игры из старой папки (сама она остаётся).
+ */
+function migrateUserData() {
+  try {
+    const next = app.getPath('userData')
+    const old = join(app.getPath('appData'), 'Exile Forge')
+    if (existsSync(join(next, 'settings.json')) || !existsSync(join(old, 'settings.json'))) return
+    mkdirSync(next, { recursive: true })
+    for (const name of ['settings.json', 'market-cache.json', 'trade-stats.json', 'harvest-costs.json', 'custom-profiles.json', 'journal.json', 'repoe', 'currency-icons'])
+      if (existsSync(join(old, name))) cpSync(join(old, name), join(next, name), { recursive: true })
+  } catch {
+    /* не удалось — начнём с чистых настроек */
+  }
+}
 
 function send(e: OverlayEvent) {
   win?.webContents.send('overlay:event', e)
@@ -267,13 +288,20 @@ ipcMain.handle('pc:search', async (_e, item: ParsedItem, filters: PcFilter[]) =>
     sendLimits()
   }
 })
+ipcMain.handle('pc:more', async (_e, item: ParsedItem, queryId: string, ids: string[]) => {
+  try {
+    return await pcMore(await currentLeague(), item, queryId, ids)
+  } finally {
+    sendLimits()
+  }
+})
 ipcMain.on('pc:close', () => {
   pcVisible = false
   pcWin?.hide()
 })
 
-// отладка без игры: прайс-чек и крафт по тексту предмета (только с переменной окружения EXILE_FORGE_DEBUG)
-if (process.env.EXILE_FORGE_DEBUG) {
+// отладка без игры: прайс-чек и крафт по тексту предмета (только с переменной окружения POESMITH_DEBUG)
+if (process.env.POESMITH_DEBUG || process.env.EXILE_FORGE_DEBUG) {
   ipcMain.handle('debug:item', async (_e, text: string, mode: 'read' | 'price') => {
     const item = parseItem(text)
     if (!item) return false
@@ -301,12 +329,14 @@ ipcMain.handle('craft:value', async (_e, item: ParsedItem): Promise<ValueEstimat
     sendLimits()
   }
 })
-ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lang: Lang) => {
+ipcMain.handle('icons:currency', (_e, ids: string[]) => currencyIcons(ids))
+ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lang: Lang, popts?: CraftPlanOptions) => {
   const league = await currentLeague()
   try {
     return await buildPlan(item, targets, lang, league, {
       customPrices: settings.customPrices,
-      basePrice: (baseType, lvl) => basePrice(league, baseType, lvl)
+      ignoreIlvl: !!popts?.ignoreIlvl,
+      basePrice: (baseType, lvl, max) => basePrice(league, baseType, lvl, max)
     })
   } finally {
     sendLimits()
@@ -351,11 +381,17 @@ ipcMain.on('craft:open', (_e, item: ParsedItem) => {
   send({ type: 'openCraft', item })
 })
 
+// обновления приложения
+ipcMain.handle('update:get', () => updateState())
+ipcMain.handle('update:check', () => checkForUpdates())
+ipcMain.handle('update:download', () => downloadUpdate())
+ipcMain.on('update:install', () => installUpdate())
+
 app.on('second-instance', showOverlay)
 app.whenReady().then(() => {
   settings = loadSettings()
   // без идентификатора приложения Windows не показывает уведомления
-  app.setAppUserModelId('local.exileforge.overlay')
+  app.setAppUserModelId('io.github.nightievvv.poesmith')
   createWindow()
   watchFocus()
   createTray({
@@ -368,8 +404,12 @@ app.whenReady().then(() => {
     openSettings: () => {
       showOverlay()
       send({ type: 'openTab', tab: 'settings' })
-    }
+    },
+    update: updateState,
+    downloadUpdate: () => void downloadUpdate(),
+    installUpdate
   })
+  initUpdater((s) => send({ type: 'update', data: s }))
   startWatcher(watcherDeps)
   registerHotkeys()
 })

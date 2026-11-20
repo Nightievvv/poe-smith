@@ -1,11 +1,37 @@
 import { useEffect, useState } from 'react'
-import type { CraftDataStatus, CraftPlan, Lang, ParsedItem } from '../../shared/types'
+import type { CraftDataStatus, CraftPlan, CraftVariant, Lang, ParsedItem, StepLine } from '../../shared/types'
 import type { T } from './i18n'
-import { ItemCard } from './ItemCard'
+import { ItemCard, genClass } from './ItemCard'
 import { errText } from './format'
 
 const fmtCost = (chaos: number | undefined, divine: number | null) =>
   chaos == null ? '' : divine && chaos >= divine ? `${(chaos / divine).toFixed(1)} div` : `${Math.max(1, Math.round(chaos))}c`
+
+/** вариант в выбранном режиме доводки */
+function view(v: CraftVariant | undefined, mode: 'joint' | 'single'): CraftVariant | undefined {
+  if (!v) return v
+  return mode === 'single' && v.single ? { ...v, ...v.single } : v
+}
+/** варианты по возрастанию стоимости в выбранном режиме; i — индекс в plan.variants */
+function order(p: CraftPlan, mode: 'joint' | 'single') {
+  return p.variants.map((v, i) => ({ v: view(v, mode)!, i })).sort((a, b) => a.v.costMax - b.v.costMax)
+}
+
+function Lines({ lines }: { lines: StepLine[] }) {
+  return (
+    <div className="lines">
+      {lines.map((l, i) =>
+        typeof l === 'string' ? (
+          <div key={i} className={/^(Альтернативы|Alternatives):/.test(l) ? 'alt' : undefined}>{l}</div>
+        ) : 'warn' in l ? (
+          <div key={i} className="lwarn">{l.warn}</div>
+        ) : (
+          <div key={i} className={'mline' + (l.gen ? ' gen-' + l.gen : '')}>{l.mod}</div>
+        )
+      )}
+    </div>
+  )
+}
 
 interface Props {
   t: T
@@ -35,6 +61,9 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
   const [valueDraft, setValueDraft] = useState('')
   const [valueBusy, setValueBusy] = useState(false)
   const [valueNote, setValueNote] = useState<string | null>(null)
+  // доводка: для всех модов сразу или для каждого по отдельности
+  const [mode, setMode] = useState<'joint' | 'single'>('joint')
+  const [ignoreIlvl, setIgnoreIlvl] = useState(false)
 
   useEffect(() => {
     window.api.craftDataStatus().then(setData)
@@ -47,6 +76,7 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
   useEffect(() => {
     setSelected(item ? item.mods.map(() => true) : [])
     setPlan(null)
+    setIgnoreIlvl(false)
     setError(null)
     const v = item?.valueDiv ?? null
     setValueDiv(v)
@@ -94,22 +124,26 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
     })
   }, [stepSignal])
 
-  const build = async () => {
+  const build = async (ign = ignoreIlvl) => {
     if (!item) return
     setBusy(true)
     setError(null)
     try {
       const idx = selected.map((s, i) => (s ? i : -1)).filter((i) => i >= 0)
-      const p = await window.api.craftPlan(item, idx, lang)
+      const p = await window.api.craftPlan(item, idx, lang, { ignoreIlvl: ign })
       setPlan(p)
-      setVi(0)
-      setDone((p.variants[0]?.steps ?? []).map(() => false))
+      const first = order(p, mode)[0]?.i ?? 0
+      setVi(first)
+      setDone((view(p.variants[first], mode)?.steps ?? []).map(() => false))
     } catch (e) {
       setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e))
     } finally {
       setBusy(false)
     }
   }
+
+  const shown = plan ? order(plan, mode) : []
+  const cur = plan?.variants[vi] ? view(plan.variants[vi], mode) : undefined
 
   if (!item)
     return (
@@ -136,7 +170,7 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
             }} />
         </div>
         <button className="btn" disabled={valueBusy} onClick={estimate}>{valueBusy ? t('craft.valueBusy') : t('craft.estimate')}</button>
-        <button className="btn primary" disabled={busy || !selected.some(Boolean)} onClick={build}>{t('craft.build')}</button>
+        <button className="btn primary" disabled={busy || !selected.some(Boolean)} onClick={() => build()}>{t('craft.build')}</button>
       </div>
       {valueNote && <p className="muted small">{valueNote}</p>}
       {(busy || data?.loading) && <p className="note">{data?.loading ? t('craft.loadingData') : t('craft.building')}</p>}
@@ -148,12 +182,13 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
           <div className="goal">
             <div className="chips">
               <span className="chip stage-c">{t('craft.stage')}: {plan.stage}</span>
-              <span className="chip">ilvl {plan.ilvl}+</span>
+              <span className="chip">ilvl {plan.ilvlMax == null ? `${plan.ilvl}+` : plan.ilvlMax === plan.ilvl ? plan.ilvl : `${plan.ilvl}–${plan.ilvlMax}`}</span>
+              {plan.ignoreIlvl && <span className="chip">{t('craft.ignoreIlvl')}</span>}
             </div>
             <ul className="mods targets">
               {plan.targets.map((x, i) => (
                 <li key={i} className={'k-' + x.kind + (x.found ? '' : ' off')}>
-                  <span className={'tier' + (x.tier ? '' : ' none')}>{x.tier ?? '·'}</span>
+                  <span className={'tier' + genClass(x.gen === 'implicit' ? undefined : x.gen, x.tier) + (x.tier ? '' : ' none')}>{x.tier ?? '·'}</span>
                   <span className="mtext">{x.text}</span>
                   <span className="src muted">{x.source}</span>
                 </li>
@@ -181,8 +216,8 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
               }}>{t('craft.savePrices')}</button>
             </div>
           )}
-          {plan.variants[0] && (() => {
-            const pr = profit(plan.variants[0])
+          {shown[0] && (() => {
+            const pr = profit(shown[0].v)
             if (!pr) return <p className="note">{t('craft.noValue')}</p>
             if (pr.pMid < 0.3)
               return (
@@ -195,11 +230,20 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
           })()}
           {plan.variants.length > 0 && (
             <div className="variants" role="radiogroup" aria-label={t('craft.variants')}>
-              <div className="lbl">{t('craft.variants')}</div>
-              {plan.variants.map((v, i) => (
+              <div className="row spread">
+                <div className="lbl">{t('craft.variants')}</div>
+                <div className="mode-switch" role="group" aria-label={t('craft.modeHint')} title={t('craft.modeHint')}>
+                  {(['joint', 'single'] as const).map((m) => (
+                    <button key={m} aria-pressed={mode === m} onClick={() => { setMode(m); setDone((view(plan.variants[vi], m)?.steps ?? []).map(() => false)) }}>
+                      {t(m === 'joint' ? 'craft.modeJoint' : 'craft.modeSingle')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {shown.map(({ v, i }, k) => (
                 <button key={i} role="radio" aria-checked={vi === i} className={'variant' + (vi === i ? ' on' : '')}
                   onClick={() => { setVi(i); setDone(v.steps.map(() => false)) }}>
-                  <span className="vname">{v.name}{i === 0 && <span className="best">{t('craft.recommended')}</span>}</span>
+                  <span className="vname">{v.name}{k === 0 && <span className="best">{t('craft.recommended')}</span>}</span>
                   <span className="vchips">{v.mechanics.map((m) => <span key={m} className="mech">{m}</span>)}</span>
                   <span className="mono vcost">{v.costMax ? `${fmtCost(v.costMin, plan.divine)}–${fmtCost(v.costMax, plan.divine)}` : '—'}</span>
                   {(() => {
@@ -215,11 +259,15 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
               ))}
             </div>
           )}
-          {plan.variants[vi]?.notes.map((n, i) => <p key={i} className="note">{n}</p>)}
-          {plan.variants[vi] && (
+          {cur?.notes.map((n, i) => <p key={i} className="note">{n}</p>)}
+          {cur && (
             <div className="row end">
+              <button className={'btn' + (ignoreIlvl ? ' on' : '')} aria-pressed={ignoreIlvl} title={t('craft.ignoreIlvlHint')} disabled={busy}
+                onClick={() => { const n = !ignoreIlvl; setIgnoreIlvl(n); build(n) }}>
+                {ignoreIlvl ? t('craft.respectIlvl') : t('craft.ignoreIlvl')}
+              </button>
               <button className="btn" onClick={async () => {
-                const v = plan.variants[vi]
+                const v = cur
                 await window.api.journalAdd({
                   itemName: item.name, baseType: item.baseType, variant: v.name, mechanics: v.mechanics,
                   plannedMin: v.costMin, plannedMax: v.costMax, valueChaos: valueChaos ?? null,
@@ -231,14 +279,19 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
             </div>
           )}
           <ol className="steps">
-            {(plan.variants[vi]?.steps ?? []).map((s, i) => (
+            {(cur?.steps ?? []).map((s, i) => (
               <li key={i} className={'step k-' + s.kind + (s.optional ? ' optional' : '') + (done[i] ? ' done' : '')}>
                 <input type="checkbox" checked={!!done[i]} aria-label={s.title}
                   onChange={() => setDone((d) => d.map((v, j) => (j === i ? !v : v)))} />
                 <div>
-                  {s.optional && <span className="opt">{t('craft.optional')}</span>}
+                  {(s.optional || s.method) && (
+                    <div className="shead">
+                      {s.optional && <span className="opt">{t('craft.optional')}</span>}
+                      {s.method && <span className="mech">{s.method}</span>}
+                    </div>
+                  )}
                   <h4>{i + 1}. {s.title}</h4>
-                  {s.detail && <div className="muted small">{s.detail}</div>}
+                  {s.lines && s.lines.length > 0 && <Lines lines={s.lines} />}
                   <dl className="meta">
                     {s.currency.length > 0 && (
                       <>

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { ExampleItem, MarketQuery, ParsedItem, ProfileResult, Settings, SlotId, SlotMarket } from '../../shared/types'
 import { listingToItem } from './listing'
+import { fillCraftedGen } from './modinfo'
 import { analyze, type PricePoint } from '../../shared/analyze'
 import { SLOT_CATEGORY, subtypeOf } from '../../shared/poe1/catalog'
 import { profilesFor, profileTargetMods, type Profile } from './profiles'
@@ -131,7 +132,9 @@ export async function getCached(league: string, q: MarketQuery): Promise<SlotMar
   if (!cached)
     return { slot: q.slot, subtype: q.subtype, minChaos, hasMore: all.length > 0, totalProfiles: all.length, league, scannedAt: null, scanning: false, profiles: [], divine: rates?.divine }
   // набор профилей мог измениться (добавили или удалили свой) — сверяем кэш с текущим списком
-  const profiles = cached.profiles.filter((r) => all.some((p) => p.id === r.id))
+  const profiles = cached.profiles
+    .filter((r) => all.some((p) => p.id === r.id))
+    .map((r) => (r.examples ? { ...r, examples: r.examples.map(fillCraftedGen) } : r))
   return { ...cached, profiles, totalProfiles: all.length, hasMore: profiles.length < all.length }
 }
 

@@ -4,7 +4,7 @@ import { join } from 'path'
 import type { ParsedItem, PcFilter } from '../../shared/types'
 import type { Profile } from './profiles'
 
-/** Свои профили рынка: создаются из прайс-чека, хранятся в %APPDATA%/exile-forge/custom-profiles.json. */
+/** Свои профили рынка: создаются из прайс-чека, хранятся в %APPDATA%/PoESmith/custom-profiles.json. */
 const file = () => join(app.getPath('userData'), 'custom-profiles.json')
 
 export function listCustom(): Profile[] {

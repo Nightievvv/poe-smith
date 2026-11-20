@@ -42,6 +42,8 @@ export interface Base {
   tags: string[]
   implicits: string[]
   dropLevel: number
+  /** базовые значения из данных игры: защита {min,max}, урон, время атаки (мс), крит (сотые %) */
+  props: Record<string, any>
 }
 
 export interface Essence {
@@ -75,6 +77,8 @@ let loading: Promise<CraftData> | null = null
 const listeners = new Set<(s: CraftDataStatus) => void>()
 
 export const craftStatus = () => status
+/** данные, если уже загружены (без загрузки) */
+export const craftDataIfLoaded = () => data
 export const onCraftStatus = (cb: (s: CraftDataStatus) => void) => listeners.add(cb)
 function setStatus(s: CraftDataStatus) {
   status = s
@@ -119,7 +123,7 @@ function build(version: string): CraftData {
   for (const [id, b] of Object.entries(rawBases)) {
     if (id.includes('/Currency/')) currencyName.set(id, b.name)
     if (b.release_state !== 'released' || !b.name) continue
-    const v = { id, name: b.name, itemClass: b.item_class, domain: b.domain, tags: b.tags ?? [], implicits: b.implicits ?? [], dropLevel: b.drop_level ?? 1 }
+    const v = { id, name: b.name, itemClass: b.item_class, domain: b.domain, tags: b.tags ?? [], implicits: b.implicits ?? [], dropLevel: b.drop_level ?? 1, props: b.properties ?? {} }
     bases.set(b.name, [...(bases.get(b.name) ?? []), v])
   }
   const rawMods = read('mods.min.json') as Record<string, any>

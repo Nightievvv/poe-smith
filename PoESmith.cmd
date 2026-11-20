@@ -1,5 +1,5 @@
 @echo off
-rem Exile Forge launcher: double-click to start. Does not need npm in PATH.
+rem PoESmith launcher: double-click to start. Does not need npm in PATH.
 cd /d "%~dp0app"
 set "NODEDIR=C:\Program Files\nodejs"
 set "PATH=%NODEDIR%;%PATH%"

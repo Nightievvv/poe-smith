@@ -2,6 +2,7 @@ import type { ExampleItem } from '../../shared/types'
 import type { T } from './i18n'
 import { fmtPrice } from './format'
 import { ItemCard } from './ItemCard'
+import { CurrencyAmount, parsePrice } from './Currency'
 
 /** 3–5 реальных лотов профиля; кнопка открывает предмет во вкладке «Крафт». */
 export function Examples({ items, t, divine, onPick }: { items: ExampleItem[]; t: T; divine?: number; onPick: (e: ExampleItem) => void }) {
@@ -17,7 +18,10 @@ export function Examples({ items, t, divine, onPick }: { items: ExampleItem[]; t
             extra={
               <div className="ex-price">
                 <b className="mono">{fmtPrice(e.priceDiv, divine)}</b>
-                <span className="muted small">{e.price}</span>
+                {(() => {
+                  const p = parsePrice(e.price)
+                  return p ? <CurrencyAmount amount={p.amount} id={p.id} className="small" /> : <span className="muted small">{e.price}</span>
+                })()}
                 <button className="btn" onClick={() => onPick(e)}>{t('market.toCraft')}</button>
               </div>
             }

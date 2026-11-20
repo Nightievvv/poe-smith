@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ExampleItem, HotkeyId, Limits, MarketQuery, ParsedItem, Settings, SlotMarket } from '../../shared/types'
+import type { ExampleItem, HotkeyId, Limits, MarketQuery, ParsedItem, Settings, SlotMarket, UpdateState } from '../../shared/types'
+import { UpdateBanner } from './UpdateBanner'
 import { makeT } from './i18n'
 import { matches } from './hotkeys'
 import { SettingsTab } from './SettingsTab'
@@ -21,6 +22,7 @@ export function App() {
   const [readFailed, setReadFailed] = useState(false)
   const [limits, setLimits] = useState<Limits | null>(null)
   const [stepSignal, setStepSignal] = useState(0)
+  const [update, setUpdate] = useState<UpdateState | null>(null)
   const recording = useRef(false)
   const queryRef = useRef(query)
   queryRef.current = query
@@ -32,6 +34,7 @@ export function App() {
     })
     window.api.getLimits().then(setLimits)
     window.api.getDivine().then(setDivine)
+    window.api.updateState().then(setUpdate)
   }, [])
 
   const setQuery = (q: MarketQuery) => {
@@ -71,6 +74,7 @@ export function App() {
         if (e.type === 'openCraft') openCraft(e.item)
         if (e.type === 'openTab') setTab(e.tab)
         if (e.type === 'limits') setLimits(e.data)
+        if (e.type === 'update') setUpdate(e.data)
       }),
     []
   )
@@ -120,7 +124,7 @@ export function App() {
   return (
     <div className="ov" style={{ ['--op' as string]: settings.opacity }} lang={settings.lang}>
       <div className="ov-head">
-        <span className="logo">Exile Forge</span>
+        <span className="logo">PoESmith</span>
         {settings.hotkeys.toggle && <span className="kbd">{settings.hotkeys.toggle}</span>}
         <button className="ico" title={t('hide')} aria-label={t('hide')} onClick={() => window.api.hide()}>
           ✕
@@ -135,11 +139,13 @@ export function App() {
       </div>
 
       <div className="ov-body">
-        {tab === 'craft' && (
+        <UpdateBanner u={update} t={t} />
+        {/* вкладка крафта не размонтируется: план и отметки шагов сохраняются при переходе на другие вкладки */}
+        <div className="tab-pane" hidden={tab !== 'craft'}>
           <CraftTab t={t} lang={settings.lang} item={item} readFailed={readFailed} readKey={settings.hotkeys.read || '—'}
             onClose={() => setItem(null)} stepSignal={stepSignal}
             customPrices={settings.customPrices} saveCustomPrices={(customPrices) => save({ customPrices })} />
-        )}
+        </div>
         {tab === 'market' && (
           <MarketTab t={t} lang={settings.lang} query={query} setQuery={setQuery} market={market} divine={divine}
             onExample={(e: ExampleItem) => openCraft({ ...e, valueDiv: e.valueDiv ?? (e.priceDiv || undefined) })}
@@ -152,6 +158,7 @@ export function App() {
             settings={settings}
             t={t}
             failed={failed}
+            update={update}
             save={save}
             onRecording={(r) => {
               recording.current = r
@@ -163,7 +170,7 @@ export function App() {
 
       <div className="ov-foot">
         <span>{settings.clickThrough ? t('clickThroughOn') : limitText}</span>
-        <span className="mono">v0.3</span>
+        <span className="mono">v{update?.current ?? ''}</span>
       </div>
     </div>
   )

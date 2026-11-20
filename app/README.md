@@ -1,4 +1,4 @@
-# Exile Forge
+# PoESmith
 
 Оверлей для Path of Exile: пошаговый крафт редких предметов и анализ рынка (трейд + poe.ninja).
 
@@ -8,7 +8,8 @@
 npm install
 npm run dev      # режим разработки с перезагрузкой
 npm run build    # сборка в out/
-npm run dist     # установщик .exe в dist/
+npm run dist     # установщик .exe в dist/ (без публикации)
+npm run release  # установщик + GitHub Release (только вручную)
 ```
 
 Игра должна быть в режиме **Windowed Fullscreen**, иначе Windows не покажет окно поверх неё.
@@ -20,7 +21,19 @@ npm run dist     # установщик .exe в dist/
 - `src/renderer` — интерфейс оверлея (React), переводы в `i18n.ts`.
 - `src/shared` — общие типы.
 
-Настройки лежат в `%APPDATA%/exile-forge/settings.json`.
+Настройки лежат в `%APPDATA%/PoESmith/settings.json`. При первом запуске после переименования (раньше приложение называлось Exile Forge) данные копируются из `%APPDATA%/Exile Forge`.
+
+## Обновления и релизы
+
+Приложение раз в 6 часов (и через 15 с после запуска) проверяет GitHub Releases репозитория [Nightievvv/poe-smith](https://github.com/Nightievvv/poe-smith) (`src/main/updater.ts`, `electron-updater`). О новой версии сообщает плашка в окне и пункт в меню трея; скачивание и установка — только по кнопке. Скачанное, но не установленное обновление ставится при выходе. При запуске из исходников обновления выключены.
+
+Новая версия выходит только вручную:
+
+1. Поднять `"version"` в `package.json` и закоммитить.
+2. Закрыть собранное приложение (оно держит файлы в `dist/win-unpacked`).
+3. `npm run release` — собирает установщик, пушит ветку и создаёт релиз `vX.Y.Z` с `PoESmith-Setup-X.Y.Z.exe`, `.blockmap` и `latest.yml` (нужен `gh auth login`).
+
+Установщик без цифровой подписи: Windows SmartScreen может предупредить при первой установке.
 
 ## Этапы
 
@@ -31,11 +44,11 @@ npm run dist     # установщик .exe в dist/
    - Курс валют — биржа poe.ninja (`/poe1/api/economy/exchange/current/overview`), как на сайте.
    - Трейд опрашивается только по кнопке «Найти» / «Загрузить ещё»; смена фильтров показывает кэш.
    - Лимиты трейда (ноябрь 2026): поиск 5/10 с, 15/мин, 30/5 мин; выгрузка 50/5 мин. Лимиты общие для IP: поиск в браузере их тоже расходует.
-   - Кэш и история медиан: `%APPDATA%/exile-forge/market-cache.json`.
+   - Кэш и история медиан: `%APPDATA%/PoESmith/market-cache.json`.
    - Прайс-чек — отдельное окно слева (`#pricecheck`): моды с галочками и порогами «от/до», 15 самых дешёвых лотов, кнопка «Искать».
    - Предмет копируется в расширенном формате (Ctrl+Alt+C), поэтому из игры приходят тиры модов.
 3. Крафт — **готово (первая версия)**:
-   - Данные игры: RePoE (`src/main/poe1/craftdata.ts`), ~27 МБ, кэш в `%APPDATA%/exile-forge/repoe`, обновляется при смене версии игры.
+   - Данные игры: RePoE (`src/main/poe1/craftdata.ts`), ~27 МБ, кэш в `%APPDATA%/PoESmith/repoe`, обновляется при смене версии игры.
    - Планировщик (`src/main/poe1/planner.ts`) строит до 5 вариантов. Основной метод: Essence, Chaos, Alteration+Regal, Harvest (реролл по тегу), Fossil (1–2 фоссилии + резонатор). Затем для каждого оставшегося мода — шаг доводки «по необходимости»: верстак (не больше одного крафтового мода), Exalted Orb + Annulment или мета-крафт «Prefix/Suffix Modifiers cannot be changed» + Scouring + Exalted.
    - Стоимость: эссенция — до «основной + один дополнительный», остальные методы — до основного мода; доводка умножается на вероятность, что мод ещё нужен.
    - Плюс имплиситы Searing Exarch / Eater of Worlds, порча Vaal, энчанты, качество и связи; цены — poe.ninja.
@@ -44,11 +57,11 @@ npm run dist     # установщик .exe в dist/
    - Бист-крафт: «Add a Prefix/Suffix, Remove a Random Suffix/Prefix», моды влияний; рецепты по таблице Bestiary на poedb (без даты), цены зверей — poe.ninja.
    - Harvest: стоимость крафтов по таблице poedb.tw/us/Horticrafting (`src/main/poe1/harvest.ts`): реролл по тегу, «добавить мод и убрать случайный», смена типа сопротивления.
    - Стоимость показывается диапазоном: расход на попытки 50–100% от расчётного. Прибыль: цена продажи (профиль, лот, прайс-чек или «Оценить на трейде») минус стоимость; маржа < 30% → плашка «Выгоднее купить».
-   - Отладка без игры: `EXILE_FORGE_DEBUG=1` открывает `window.debug.item(text, 'read' | 'price')`.
+   - Отладка без игры: `POESMITH_DEBUG=1` открывает `window.debug.item(text, 'read' | 'price')`.
 4. Улучшения — **готово**:
    - Симуляция роллов (Монте-Карло, `src/main/poe1/sim.ts`): группы модов, лимит сторон, число модов; 20 000 роллов на метод.
    - Цена белой базы с трейда входит в стоимость крафта (`baseprice.ts`).
-   - Свои цены для валюты без цены на poe.ninja (`Settings.customPrices`), таблица Harvest — `%APPDATA%/Exile Forge/harvest-costs.json`.
+   - Свои цены для валюты без цены на poe.ninja (`Settings.customPrices`), таблица Harvest — `%APPDATA%/PoESmith/harvest-costs.json`.
    - «Показывать только когда игра активна» — по заголовку активного окна (`focus.ts`).
    - Свои профили рынка из прайс-чека (`custom-profiles.json`), журнал крафтов (`journal.json`).
    - Уведомления о выгодных крафтах по избранным профилям (`watcher.ts`) — по умолчанию выключены.

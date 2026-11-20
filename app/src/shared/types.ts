@@ -216,6 +216,7 @@ export interface PcFilter {
   enabled: boolean
   /** удалось ли сопоставить мод с фильтром трейда */
   matched: boolean
+  gen?: 'prefix' | 'suffix'
 }
 
 export interface PcRow {
@@ -223,6 +224,14 @@ export interface PcRow {
   ilvl: number | null
   price: string
   priceDiv: number
+  /** полный предмет лота — для раскрываемой карточки */
+  item?: ParsedItem
+}
+
+/** Иконка валюты трейда: id трейда (chaos, divine…) → картинка (data URL) и название. */
+export interface CurrencyIcon {
+  src: string
+  name: string
 }
 
 export interface PcResult {
@@ -230,6 +239,9 @@ export interface PcResult {
   rows: PcRow[]
   tradeUrl: string
   divine: number
+  /** id поиска на трейде и ещё не загруженные лоты — для «Загрузить ещё» */
+  queryId?: string
+  rest?: string[]
 }
 
 export interface PriceCheckState {
@@ -248,12 +260,18 @@ export interface CraftCost {
   attempts?: boolean
 }
 
+/** Строка описания шага: обычное предложение или мод (префикс/суффикс), который выводится с отступом и цветом стороны. */
+export type StepLine = string | { mod: string; gen?: 'prefix' | 'suffix' } | { warn: string }
+
 export interface CraftStep {
   kind: 'base' | 'implicit' | 'explicit' | 'bench' | 'finish'
   /** шаг доводки: нужен, только если мод не выпал на предыдущих шагах */
   optional?: boolean
+  /** метод крафта этого шага (Currency, Essence, Harvest, Beastcraft…) — подпись «в коробке» */
+  method?: string
   title: string
-  detail?: string
+  /** описание: каждое смысловое предложение — отдельная строка */
+  lines?: StepLine[]
   currency: CraftCost[]
   station?: string
   farm?: string
@@ -283,11 +301,22 @@ export interface CraftVariant {
   costMax: number
   /** заметки к варианту (риски, допущения) */
   notes: string[]
+  /** тот же вариант, но доводка подобрана для каждого мода по отдельности (основные поля — для всех модов сразу) */
+  single?: { steps: CraftStep[]; totalChaos: number | null; costMin: number; costMax: number; mechanics: string[] }
+}
+
+export interface CraftPlanOptions {
+  /** не ограничивать ilvl базы уровнем образца */
+  ignoreIlvl?: boolean
 }
 
 export interface CraftPlan {
   stage: string
   ilvl: number
+  /** верхняя граница ilvl базы (null — без ограничения) */
+  ilvlMax: number | null
+  /** план построен без учёта ilvl образца */
+  ignoreIlvl?: boolean
   targets: CraftTarget[]
   /** варианты по возрастанию стоимости; первый — рекомендуемый */
   variants: CraftVariant[]
@@ -327,6 +356,19 @@ export interface Limits {
   fetch: { used: number; max: number; period: number; blockedFor: number }
 }
 
+/** Состояние обновления приложения (GitHub Releases). disabled — запуск из исходников. */
+export interface UpdateState {
+  status: 'disabled' | 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error'
+  /** текущая версия приложения */
+  current: string
+  /** найденная новая версия */
+  version?: string
+  /** процент скачивания */
+  progress?: number
+  checkedAt?: number
+  error?: string
+}
+
 export type OverlayEvent =
   | { type: 'hotkey'; id: HotkeyId }
   | { type: 'clickThrough'; value: boolean }
@@ -337,6 +379,7 @@ export type OverlayEvent =
   | { type: 'craftData'; data: CraftDataStatus }
   | { type: 'openCraft'; item: ParsedItem }
   | { type: 'openTab'; tab: 'craft' | 'market' | 'journal' | 'settings' }
+  | { type: 'update'; data: UpdateState }
 
 export interface Api {
   getSettings(): Promise<Settings>
@@ -357,9 +400,11 @@ export interface Api {
   getPriceCheck(): Promise<PriceCheckState | null>
   /** поиск по выбранным фильтрам: 15 лотов от дешёвых к дорогим */
   pcSearch(item: ParsedItem, filters: PcFilter[]): Promise<PcResult>
+  /** следующие лоты того же поиска */
+  pcMore(item: ParsedItem, queryId: string, ids: string[]): Promise<{ rows: PcRow[]; rest: string[] }>
   closePriceCheck(): void
   /** план крафта: targets — индексы модов item.mods, которые нужно получить */
-  craftPlan(item: ParsedItem, targets: number[], lang: Lang): Promise<CraftPlan>
+  craftPlan(item: ParsedItem, targets: number[], lang: Lang, opts?: CraftPlanOptions): Promise<CraftPlan>
   craftDataStatus(): Promise<CraftDataStatus>
   /** проверить избранные профили прямо сейчас (обычно — раз в N минут в фоне) */
   checkFavorites(): Promise<void>
@@ -377,6 +422,13 @@ export interface Api {
   estimateValue(item: ParsedItem): Promise<ValueEstimate>
   /** открыть предмет во вкладке «Крафт» основного окна */
   openInCraft(item: ParsedItem): void
+  /** иконки валюты по id трейда (chaos, divine…); недоступные пропускаются */
+  currencyIcons(ids: string[]): Promise<Record<string, CurrencyIcon>>
   hide(): void
+  /** обновления: проверка только сообщает о версии, скачивание и установка — по кнопке */
+  updateState(): Promise<UpdateState>
+  checkUpdate(): Promise<UpdateState>
+  downloadUpdate(): Promise<void>
+  installUpdate(): void
   onEvent(cb: (e: OverlayEvent) => void): () => void
 }

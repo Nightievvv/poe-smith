@@ -4,8 +4,8 @@ import { getRates } from './ninja'
 /** Цена белой базы нужного уровня: медиана 5 самых дешёвых лотов (1 поиск + 1 выгрузка). Кэш 30 минут. */
 const cache = new Map<string, { at: number; v: { chaos: number; count: number } | null }>()
 
-export async function basePrice(league: string, baseType: string, ilvl: number): Promise<{ chaos: number; count: number } | null> {
-  const key = `${league}|${baseType}|${ilvl}`
+export async function basePrice(league: string, baseType: string, ilvl: number, maxIlvl?: number | null): Promise<{ chaos: number; count: number } | null> {
+  const key = `${league}|${baseType}|${ilvl}|${maxIlvl ?? ""}`
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.v
   const rates = await getRates(league)
@@ -15,7 +15,7 @@ export async function basePrice(league: string, baseType: string, ilvl: number):
     stats: [{ type: 'and', filters: [] }],
     filters: {
       type_filters: { filters: { rarity: { option: 'normal' } } },
-      misc_filters: { filters: { ilvl: { min: ilvl }, corrupted: { option: 'false' } } },
+      misc_filters: { filters: { ilvl: { min: ilvl, ...(maxIlvl ? { max: maxIlvl } : {}) }, corrupted: { option: 'false' } } },
       trade_filters: { filters: { sale_type: { option: 'priced' } } }
     }
   }

@@ -15,8 +15,10 @@ const api: Api = {
   getLimits: () => ipcRenderer.invoke('limits:get'),
   getPriceCheck: () => ipcRenderer.invoke('pc:get'),
   pcSearch: (item, filters) => ipcRenderer.invoke('pc:search', item, filters),
+  pcMore: (item, queryId, ids) => ipcRenderer.invoke('pc:more', item, queryId, ids),
   closePriceCheck: () => ipcRenderer.send('pc:close'),
-  craftPlan: (item, targets, lang) => ipcRenderer.invoke('craft:plan', item, targets, lang),
+  craftPlan: (item, targets, lang, opts) => ipcRenderer.invoke('craft:plan', item, targets, lang, opts),
+  currencyIcons: (ids) => ipcRenderer.invoke('icons:currency', ids),
   craftDataStatus: () => ipcRenderer.invoke('craft:status'),
   estimateValue: (item) => ipcRenderer.invoke('craft:value', item),
   checkFavorites: () => ipcRenderer.invoke('watcher:check'),
@@ -30,6 +32,10 @@ const api: Api = {
   resetHarvestFile: () => ipcRenderer.invoke('harvest:reset'),
   openInCraft: (item) => ipcRenderer.send('craft:open', item),
   hide: () => ipcRenderer.send('overlay:hide'),
+  updateState: () => ipcRenderer.invoke('update:get'),
+  checkUpdate: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.send('update:install'),
   onEvent: (cb) => {
     const h = (_: unknown, e: OverlayEvent) => cb(e)
     ipcRenderer.on('overlay:event', h)
@@ -38,5 +44,5 @@ const api: Api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
-if (process.env.EXILE_FORGE_DEBUG)
+if (process.env.POESMITH_DEBUG || process.env.EXILE_FORGE_DEBUG)
   contextBridge.exposeInMainWorld('debug', { item: (text: string, mode: 'read' | 'price') => ipcRenderer.invoke('debug:item', text, mode) })

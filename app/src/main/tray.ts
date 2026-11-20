@@ -1,7 +1,7 @@
 import { app, Menu, nativeImage, Tray, type NativeImage } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import type { CraftDataStatus, Limits, Settings } from '../shared/types'
+import type { CraftDataStatus, Limits, Settings, UpdateState } from '../shared/types'
 
 /** Иконка приложения: в сборке лежит в resources, в разработке — в app/build. */
 export function appIconPath(): string | null {
@@ -24,6 +24,9 @@ export interface TrayDeps {
   visible: () => boolean
   toggle: () => void
   openSettings: () => void
+  update: () => UpdateState
+  downloadUpdate: () => void
+  installUpdate: () => void
 }
 
 let tray: Tray | null = null
@@ -33,7 +36,7 @@ export function createTray(deps: TrayDeps) {
   // без иконки Windows не покажет значок в трее — берём пустой 16×16, чтобы приложение всё равно работало
   const icon = appIcon(16) ?? nativeImage.createEmpty().resize({ width: 16, height: 16 })
   tray = new Tray(icon)
-  tray.setToolTip('Exile Forge')
+  tray.setToolTip('PoESmith')
   tray.on('click', () => deps.toggle())
   tray.on('right-click', async () => {
     const s = deps.settings()
@@ -49,7 +52,7 @@ export function createTray(deps: TrayDeps) {
     const blocked = Math.max(l.search.blockedFor, l.fetch.blockedFor)
     const data = deps.craftData()
     const menu = Menu.buildFromTemplate([
-      { label: 'Exile Forge', enabled: false },
+      { label: 'PoESmith', enabled: false },
       { type: 'separator' },
       { label: T(`Лига: ${league}`, `League: ${league}`), enabled: false },
       {
@@ -68,6 +71,13 @@ export function createTray(deps: TrayDeps) {
       { type: 'separator' },
       { label: deps.visible() ? T(`Скрыть оверлей (${s.hotkeys.toggle})`, `Hide overlay (${s.hotkeys.toggle})`) : T(`Показать оверлей (${s.hotkeys.toggle})`, `Show overlay (${s.hotkeys.toggle})`), click: deps.toggle },
       { label: T('Настройки', 'Settings'), click: deps.openSettings },
+      ...(() => {
+        const u = deps.update()
+        if (u.status === 'available') return [{ type: 'separator' as const }, { label: T(`Скачать обновление ${u.version}`, `Download update ${u.version}`), click: deps.downloadUpdate }]
+        if (u.status === 'downloading') return [{ type: 'separator' as const }, { label: T(`Скачиваю обновление… ${u.progress ?? 0}%`, `Downloading update… ${u.progress ?? 0}%`), enabled: false }]
+        if (u.status === 'ready') return [{ type: 'separator' as const }, { label: T(`Перезапустить и обновить до ${u.version}`, `Restart to update to ${u.version}`), click: deps.installUpdate }]
+        return []
+      })(),
       { type: 'separator' },
       { label: T('Выход', 'Quit'), click: () => app.quit() }
     ])

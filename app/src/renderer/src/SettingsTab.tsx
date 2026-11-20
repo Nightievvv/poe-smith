@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { HOTKEY_ORDER, HOTKEY_SCOPE, type HotkeyId, type LeagueInfo, type Settings } from '../../shared/types'
+import { UpdateStatus } from './UpdateBanner'
+import { HOTKEY_ORDER, HOTKEY_SCOPE, type HotkeyId, type LeagueInfo, type Settings, type UpdateState } from '../../shared/types'
 import { hotkeyLabel, type T } from './i18n'
 import { accelFromEvent } from './hotkeys'
 
@@ -7,11 +8,12 @@ interface Props {
   settings: Settings
   t: T
   failed: HotkeyId[]
+  update: UpdateState | null
   save: (patch: Partial<Settings>) => Promise<void>
   onRecording: (r: boolean) => void
 }
 
-export function SettingsTab({ settings, t, failed, save, onRecording }: Props) {
+export function SettingsTab({ settings, t, failed, update, save, onRecording }: Props) {
   const [leagues, setLeagues] = useState<LeagueInfo | null>(null)
   const [recording, setRecording] = useState<HotkeyId | null>(null)
   const [hasSess, setHasSess] = useState(false)
@@ -71,6 +73,9 @@ export function SettingsTab({ settings, t, failed, save, onRecording }: Props) {
 
   return (
     <div className="set">
+      <div className="h">{t('upd.title')}</div>
+      <UpdateStatus u={update} t={t} />
+
       <div className="h">{t('set.game')}</div>
       <label htmlFor="s-game">{t('set.version')}</label>
       <select id="s-game" value={settings.game} onChange={(e) => save({ game: e.target.value as Settings['game'] })}>

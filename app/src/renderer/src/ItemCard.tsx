@@ -4,6 +4,12 @@ import type { T } from './i18n'
 const isImplicit = (m: ItemMod) => m.kind === 'implicit' || m.kind === 'enchant'
 const r = (a: number, b: number) => `${a}–${b}`
 
+/** Цвет тира по стороне мода (как на сайте трейда): префиксы — оранжевые, суффиксы — голубые; крафт верстака — по своей стороне. */
+export function genClass(gen?: string, tier?: string): string {
+  const g = gen ?? (tier?.startsWith('P') ? 'prefix' : tier?.startsWith('S') ? 'suffix' : undefined)
+  return g === 'prefix' ? ' t-pre' : g === 'suffix' ? ' t-suf' : ''
+}
+
 /** Основные параметры: урон/DPS для оружия, защита для брони, гнёзда, качество, требования. */
 export function PropsBlock({ p, t }: { p: ItemProps; t: T }) {
   const w = p.weapon
@@ -52,7 +58,7 @@ export function ModLine({ m, children }: { m: ItemMod; children?: React.ReactNod
   return (
     <li className={'k-' + m.kind}>
       {children}
-      <span className={'tier' + (m.tier ? '' : ' none')}>{m.tier ?? '·'}</span>
+      <span className={'tier' + genClass(m.gen, m.tier) + (m.tier ? '' : ' none')}>{m.tier ?? '·'}</span>
       <span className="mtext">{m.text}</span>
     </li>
   )

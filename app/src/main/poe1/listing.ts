@@ -1,6 +1,7 @@
 import type { DamageType, ItemMod, ItemProps, ModKind, ParsedItem } from '../../shared/types'
 import { computeDps, slotOfClass } from '../../shared/poe1/item'
 import type { Listing, RawMod } from './trade'
+import { fillCraftedGen } from './modinfo'
 
 /** Трейд размечает ключевые слова: "[PlayerItemRarity|Item Rarity]" → "Item Rarity", "[Onslaught]" → "Onslaught". */
 export const cleanMarkup = (s: string) => s.replace(/\[([^\]|]+)\|([^\]]+)\]/g, '$2').replace(/\[([^\]]+)\]/g, '$1')
@@ -67,7 +68,7 @@ function props(it: Listing['item']): ItemProps {
 /** Класс предмета трейд не отдаёт: слот подставляет вызывающий код, а планировщик крафта берёт класс по базе из данных игры. */
 export function listingToItem(l: Listing, slot: ParsedItem['slot'] = null): ParsedItem {
   const it = l.item
-  return {
+  return fillCraftedGen({
     itemClass: '',
     rarity: it.rarity ?? 'Rare',
     name: cleanMarkup(it.name || it.typeLine),
@@ -83,5 +84,5 @@ export function listingToItem(l: Listing, slot: ParsedItem['slot'] = null): Pars
       ...mods(it.explicitMods, 'explicit'),
       ...mods(it.craftedMods, 'crafted')
     ]
-  }
+  })
 }

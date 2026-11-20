@@ -1,25 +1,38 @@
 {
-  "name": "exile-forge",
-  "productName": "Exile Forge",
-  "version": "0.1.0",
+  "name": "poe-smith",
+  "productName": "PoESmith",
+  "version": "0.3.0",
   "private": true,
-  "description": "Path of Exile crafting and market overlay",
+  "description": "PoESmith: Path of Exile crafting and market overlay",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "dist": "electron-vite build && electron-builder --win"
+    "dist": "electron-vite build && electron-builder --win --publish never",
+    "release": "node scripts/release.mjs"
   },
   "build": {
-    "appId": "local.exileforge.overlay",
-    "productName": "Exile Forge",
+    "appId": "io.github.nightievvv.poesmith",
+    "productName": "PoESmith",
+    "artifactName": "PoESmith-Setup-${version}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Nightievvv",
+        "repo": "poe-smith",
+        "releaseType": "release"
+      }
+    ],
     "files": [
       "out/**"
     ],
     "extraResources": [
-      { "from": "build/icon.png", "to": "icon.png" }
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
     ],
     "win": {
       "target": "nsis",
@@ -44,6 +57,7 @@
     "vite": "^8.3.8"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "koffi": "^3.3.8"
   }
 }

@@ -1,7 +1,7 @@
 import { net } from 'electron'
 import type { LeagueInfo } from '../shared/types'
 
-export const USER_AGENT = 'ExileForge/0.1 (personal overlay tool)'
+export const USER_AGENT = 'PoESmith/0.3 (personal overlay tool)'
 
 const TRADE_LEAGUES = 'https://www.pathofexile.com/api/trade/data/leagues'
 const FALLBACK: LeagueInfo = {

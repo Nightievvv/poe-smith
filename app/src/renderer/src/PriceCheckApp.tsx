@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PcFilter, PcResult, PriceCheckState, Settings } from '../../shared/types'
 import { makeT } from './i18n'
 import { ItemCard } from './ItemCard'
-import { errText, fmtPrice, fmtTotal } from './format'
+import { errText, fmtTotal } from './format'
+import { CurrencyAmount, divParts } from './Currency'
+import { genClass } from './ItemCard'
 
 const GROUPS: { id: string; kinds: PcFilter['kind'][] }[] = [
   { id: 'pc.general', kinds: ['base', 'ilvl', 'pseudo', 'weapon', 'defence'] },
@@ -24,6 +26,25 @@ export function PriceCheckApp() {
   const searchId = useRef(0)
   const [profileName, setProfileName] = useState('')
   const [profileMsg, setProfileMsg] = useState<string | null>(null)
+  // раскрытые строки результатов (индексы)
+  const [open, setOpen] = useState<Set<number>>(new Set())
+  const [moreBusy, setMoreBusy] = useState(false)
+
+  const loadMore = async () => {
+    if (!state || !result?.queryId || !result.rest?.length) return
+    const id = searchId.current
+    setMoreBusy(true)
+    setError(null)
+    try {
+      const r = await window.api.pcMore(state.item, result.queryId, result.rest)
+      // новые лоты добавляются в конец: уже показанные строки и раскрытые карточки не сдвигаются
+      if (id === searchId.current) setResult((cur) => (cur ? { ...cur, rows: [...cur.rows, ...r.rows], rest: r.rest } : cur))
+    } catch (e) {
+      if (id === searchId.current) setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMoreBusy(false)
+    }
+  }
 
   const t = useMemo(() => makeT(settings?.lang ?? 'ru'), [settings?.lang])
 
@@ -33,7 +54,10 @@ export function PriceCheckApp() {
     setError(null)
     try {
       const r = await window.api.pcSearch(s.item, f)
-      if (id === searchId.current) setResult(r)
+      if (id === searchId.current) {
+        setResult(r)
+        setOpen(new Set())
+      }
     } catch (e) {
       if (id === searchId.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -95,7 +119,7 @@ export function PriceCheckApp() {
                     <div className={'pc-row k-' + f.kind + (f.matched ? '' : ' off')}>
                       <input type="checkbox" checked={f.enabled} disabled={!f.matched} aria-label={f.label}
                         onChange={(e) => patch(f.key, { enabled: e.target.checked })} />
-                      <span className={'tier' + (f.tier ? '' : ' none')}>{f.tier ?? '·'}</span>
+                      <span className={'tier' + genClass(f.gen, f.tier) + (f.tier ? '' : ' none')}>{f.tier ?? '·'}</span>
                       <span className="pc-label" title={f.matched ? undefined : t('pc.noStat')}>
                         {f.kind === 'links' ? t('pc.links') : f.kind === 'sockets' ? t('pc.socketCount') : f.label}
                       </span>
@@ -145,20 +169,45 @@ export function PriceCheckApp() {
             {result && !loading && (
               <div className="pc-results">
                 <div className="detail-head">
-                  <span className="small">{t('pc.found', { n: fmtTotal(result.total) })}</span>
-                  <a href={result.tradeUrl} target="_blank" rel="noreferrer">{t('market.openTrade')}</a>
+                  <span className="small">{t('pc.found', { n: fmtTotal(result.total), shown: result.rows.length })}</span>
+                  <span className="row">
+                    {result.rows.some((r) => r.item) && (
+                      <button className="btn small-btn" onClick={() => setOpen(open.size ? new Set() : new Set(result.rows.map((_, i) => i)))}>
+                        {open.size ? t('pc.collapseAll') : t('pc.expandAll')}
+                      </button>
+                    )}
+                    <a href={result.tradeUrl} target="_blank" rel="noreferrer">{t('market.openTrade')}</a>
+                  </span>
                 </div>
                 {result.rows.length === 0 && <p className="note">{t('pc.nothing')}</p>}
                 <ol className="pc-list">
-                  {result.rows.map((row, i) => (
-                    <li key={i}>
-                      <span className="pc-name">{row.name}</span>
-                      <span className="muted">{row.ilvl ?? '—'}</span>
-                      <span className="mono">{row.price}</span>
-                      <span className="mono muted">{fmtPrice(row.priceDiv, divine)}</span>
-                    </li>
-                  ))}
+                  {result.rows.map((row, i) => {
+                    const toggle = () => row.item && setOpen((o) => { const n = new Set(o); if (n.has(i)) n.delete(i); else n.add(i); return n })
+                    const pp = divParts(row.priceDiv, divine)
+                    if (open.has(i) && row.item)
+                      return (
+                        <li key={i} className="pc-open" title={t('pc.collapse')} onClick={toggle}>
+                          <ItemCard item={row.item} t={t}
+                            extra={<div className="ex-price"><b className="mono">{row.price}</b>{pp && <CurrencyAmount amount={pp.amount} id={pp.id} className="small" />}</div>} />
+                        </li>
+                      )
+                    return (
+                      <li key={i} className={row.item ? 'click' : undefined} role={row.item ? 'button' : undefined} tabIndex={row.item ? 0 : undefined}
+                        aria-expanded={row.item ? false : undefined} title={row.item ? t('pc.expand') : undefined} onClick={toggle}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } }}>
+                        <span className="pc-name">{row.name}</span>
+                        <span className="muted">{row.ilvl ?? '—'}</span>
+                        <span className="mono">{row.price}</span>
+                        <span className="mono">{pp ? <CurrencyAmount amount={pp.amount} id={pp.id} /> : '—'}</span>
+                      </li>
+                    )
+                  })}
                 </ol>
+                {(result.rest?.length ?? 0) > 0 && (
+                  <button className="btn more" disabled={moreBusy} onClick={loadMore}>
+                    {moreBusy ? t('item.checking') : t('pc.more', { n: Math.min(15, result.rest!.length) })}
+                  </button>
+                )}
               </div>
             )}
           </>

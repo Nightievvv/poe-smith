@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { JournalEntry } from '../shared/types'
 
-/** Журнал крафтов: %APPDATA%/exile-forge/journal.json */
+/** Журнал крафтов: %APPDATA%/PoESmith/journal.json */
 const file = () => join(app.getPath('userData'), 'journal.json')
 
 export function listJournal(): JournalEntry[] {
