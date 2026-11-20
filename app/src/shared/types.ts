@@ -187,6 +187,10 @@ export interface ParsedItem {
   mods: ItemMod[]
   props: ItemProps
   corrupted: boolean
+  /** неопознанный (у уникального тогда нет имени — только база) */
+  unidentified?: boolean
+  /** камень умений: уровень, качество и статусы для прайс-чека */
+  gem?: { level: number; quality: number; imbued: boolean; vaal: boolean }
   /** рыночная цена готового предмета в Divine, если известна (профиль, лот, прайс-чек) */
   valueDiv?: number
 }
@@ -204,7 +208,7 @@ export interface PcFilter {
   key: string
   /** что показать в строке; для модов — текст мода */
   label: string
-  kind: ModKind | 'pseudo' | 'base' | 'ilvl' | 'weapon' | 'defence' | 'sockets' | 'links'
+  kind: ModKind | 'pseudo' | 'base' | 'ilvl' | 'weapon' | 'defence' | 'sockets' | 'links' | 'quality' | 'gem' | 'flag'
   /** для гнёзд и связей: минимальное число гнёзд каждого цвета (белые — W) */
   colors?: { r: number | null; g: number | null; b: number | null; w: number | null }
   /** id фильтра на трейде (stat id или имя поля weapon/armour/misc) */
@@ -223,6 +227,12 @@ export interface PcFilter {
 export interface PcRow {
   name: string
   ilvl: number | null
+  quality?: number
+  /** редкость лота (Unique/Rare/Magic/Normal/Gem) — цвет названия */
+  rarity?: string
+  /** цена лота как выставлена: число и id валюты трейда */
+  amount?: number
+  currency?: string
   price: string
   priceDiv: number
   /** полный предмет лота — для раскрываемой карточки */
@@ -248,6 +258,16 @@ export interface PcResult {
 export interface PriceCheckState {
   item: ParsedItem
   filters: PcFilter[]
+  /** неопознанный уникальный: возможные предметы этой базы (выбор плиткой перед поиском) */
+  uniques?: UniqueCandidate[]
+}
+
+export interface UniqueCandidate {
+  name: string
+  /** иконка (data URL) */
+  icon?: string
+  /** цена poe.ninja в Chaos */
+  chaos: number | null
 }
 
 // ---------- крафт ----------
@@ -319,6 +339,10 @@ export interface CraftVariant {
 export interface CraftPlanOptions {
   /** не ограничивать ilvl базы уровнем образца */
   ignoreIlvl?: boolean
+  /** full — крафт с нуля (как раньше); finish — докрафт этого предмета: targets — оставляемые моды, остальные моды снимаются */
+  mode?: 'full' | 'finish'
+  /** докрафт: id модов игры (минимальный тир), которые нужно добавить */
+  add?: string[]
 }
 
 export interface CraftPlan {
@@ -448,6 +472,8 @@ export interface Api {
   /** базы предметов и моды выбранной базы для генератора regex предметов */
   itemBases(): Promise<{ name: string; itemClass: string }[]>
   itemMods(base: string): Promise<ItemModData | null>
+  /** докрафт: моды предмета и моды, которые можно добавить */
+  craftAddable(item: ParsedItem): Promise<AddableData | null>
   /** обновления: проверка только сообщает о версии, скачивание и установка — по кнопке */
   updateState(): Promise<UpdateState>
   checkUpdate(): Promise<UpdateState>
@@ -535,4 +561,27 @@ export interface ItemModData {
   base: string
   itemClass: string
   groups: ItemModGroup[]
+}
+
+/** Докрафт: что уже стоит на предмете и какие моды можно добавить. */
+export interface AddableGroup {
+  id: string
+  gen: 'prefix' | 'suffix'
+  text: string
+  /** группы модов игры: два мода одной группы на предмете не уживаются */
+  groups: string[]
+  /** мод верстака */
+  bench: boolean
+  /** тиры до ilvl предмета, от лучшего: id мода игры */
+  tiers: { id: string; text: string; ilvl: number }[]
+}
+
+export interface AddableData {
+  /** лимит модов одной стороны (3, у самоцветов 2) */
+  maxSide: number
+  /** моды предмета: индекс в item.mods (+ строки того же гибридного мода), сторона, группы; locked — fractured */
+  existing: { idx: number; extra: number[]; gen?: 'prefix' | 'suffix'; groups: string[]; locked: boolean; crafted: boolean }[]
+  groups: AddableGroup[]
+  /** докрафт невозможен: осквернённый предмет */
+  blocked: 'corrupted' | null
 }

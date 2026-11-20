@@ -7,7 +7,7 @@ import { CurrencyAmount, divParts } from './Currency'
 import { genClass } from './ItemCard'
 
 const GROUPS: { id: string; kinds: PcFilter['kind'][] }[] = [
-  { id: 'pc.general', kinds: ['base', 'ilvl', 'pseudo', 'weapon', 'defence'] },
+  { id: 'pc.general', kinds: ['base', 'gem', 'quality', 'flag', 'ilvl', 'pseudo', 'weapon', 'defence'] },
   { id: 'pc.sockets', kinds: ['links', 'sockets'] },
   { id: 'pc.implicits', kinds: ['implicit', 'enchant'] },
   { id: 'pc.mods', kinds: ['explicit', 'fractured', 'crafted'] }
@@ -29,6 +29,11 @@ export function PriceCheckApp() {
   // раскрытые строки результатов (индексы)
   const [open, setOpen] = useState<Set<number>>(new Set())
   const [moreBusy, setMoreBusy] = useState(false)
+  // курс Divine для цен на плитках уникальных (до первого поиска результата ещё нет)
+  const [rate, setRate] = useState<number | null>(null)
+  useEffect(() => {
+    window.api.getDivine().then(setRate).catch(() => undefined)
+  }, [])
 
   const loadMore = async () => {
     if (!state || !result?.queryId || !result.rest?.length) return
@@ -71,6 +76,8 @@ export function PriceCheckApp() {
     setProfileMsg(null)
     if (!s) return
     setFilters(s.filters)
+    // неопознанный уникальный — сначала выбор предмета плиткой
+    if (s.uniques) return
     run(s, s.filters) // первый поиск сразу, дальше — по кнопке «Искать»
   }
 
@@ -108,7 +115,29 @@ export function PriceCheckApp() {
                 const valueDiv = v.length ? v[Math.floor((v.length - 1) / 2)] : undefined
                 window.api.openInCraft({ ...state.item, valueDiv })
               }}>{t('pc.toCraft')}</button>} />
-            {GROUPS.map((g) => {
+            {state.uniques && (
+              <div className="pc-uniques">
+                <p className="muted small">{t('pc.pickUnique', { base: state.item.baseType })}</p>
+                {state.uniques.length === 0 && <p className="note">{t('pc.noUniques')}</p>}
+                <div className="uq-grid">
+                  {state.uniques.map((u) => (
+                    <button key={u.name} className="uq-tile" onClick={() => {
+                      const s2 = { ...state, item: { ...state.item, name: u.name }, uniques: undefined }
+                      setState(s2)
+                      run(s2, filters)
+                    }}>
+                      {u.icon ? <img src={u.icon} alt="" /> : <span className="uq-noimg" />}
+                      <span className="uq-name r-unique">{u.name}</span>
+                      {u.chaos != null && (() => {
+                        const pp = rate ? divParts(u.chaos / rate, rate) : null
+                        return pp ? <CurrencyAmount amount={pp.amount} id={pp.id} className="small" /> : <CurrencyAmount amount={Math.round(u.chaos)} id="chaos" className="small" />
+                      })()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!state.uniques && GROUPS.map((g) => {
               const list = filters.filter((f) => g.kinds.includes(f.kind))
               if (!list.length) return null
               return (
@@ -123,7 +152,7 @@ export function PriceCheckApp() {
                       <span className="pc-label" title={f.matched ? undefined : t('pc.noStat')}>
                         {f.kind === 'links' ? t('pc.links') : f.kind === 'sockets' ? t('pc.socketCount') : f.label}
                       </span>
-                      {f.kind !== 'base' && f.matched && (
+                      {f.kind !== 'base' && f.kind !== 'flag' && f.matched && (
                         <>
                           <input className="num" type="text" inputMode="decimal" placeholder={t('pc.min')} aria-label={t('pc.min')}
                             value={f.min ?? ''} onChange={(e) => patch(f.key, { min: parseNum(e.target.value), enabled: true })} />
@@ -147,6 +176,7 @@ export function PriceCheckApp() {
                 </div>
               )
             })}
+            {!state.uniques && <>
             <div className="row end">
               <button className="btn primary" disabled={loading} onClick={() => run(state, filters)}>{t('pc.search')}</button>
               <button className="btn" disabled={loading} onClick={() => setFilters(state.filters)}>{t('pc.reset')}</button>
@@ -164,6 +194,7 @@ export function PriceCheckApp() {
               <button type="submit" className="btn">{t('pc.saveProfile')}</button>
             </form>
             {profileMsg && <p className="muted small">{profileMsg}</p>}
+            </>}
             {loading && <p className="note">{t('item.checking')}</p>}
             {error && <p className="note warn">{errText(t, error)}</p>}
             {result && !loading && (
@@ -188,17 +219,17 @@ export function PriceCheckApp() {
                       return (
                         <li key={i} className="pc-open" title={t('pc.collapse')} onClick={toggle}>
                           <ItemCard item={row.item} t={t}
-                            extra={<div className="ex-price"><b className="mono">{row.price}</b>{pp && <CurrencyAmount amount={pp.amount} id={pp.id} className="small" />}</div>} />
+                            extra={<div className="ex-price">{row.amount != null ? <CurrencyAmount amount={row.amount} id={row.currency!} /> : pp && <CurrencyAmount amount={pp.amount} id={pp.id} />}</div>} />
                         </li>
                       )
                     return (
                       <li key={i} className={row.item ? 'click' : undefined} role={row.item ? 'button' : undefined} tabIndex={row.item ? 0 : undefined}
                         aria-expanded={row.item ? false : undefined} title={row.item ? t('pc.expand') : undefined} onClick={toggle}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } }}>
-                        <span className="pc-name">{row.name}</span>
-                        <span className="muted">{row.ilvl ?? '—'}</span>
-                        <span className="mono">{row.price}</span>
-                        <span className="mono">{pp ? <CurrencyAmount amount={pp.amount} id={pp.id} /> : '—'}</span>
+                        <span className={'pc-name r-' + (row.rarity ?? 'rare').toLowerCase()}>{row.name}</span>
+                        <span className="muted mono">{row.quality ? `${row.quality}%` : ''}</span>
+                        <span className="muted">{row.ilvl || ''}</span>
+                        <span className="mono">{row.amount != null ? <CurrencyAmount amount={row.amount} id={row.currency!} /> : pp ? <CurrencyAmount amount={pp.amount} id={pp.id} /> : '—'}</span>
                       </li>
                     )
                   })}

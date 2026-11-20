@@ -8,6 +8,7 @@ import { getRates } from './ninja'
 import { loadCraftData } from './craftdata'
 import { basePool, rankAtIlvl, resolveMod } from './modinfo'
 import { listingToItem } from './listing'
+import { gemType, uniqueCandidates } from './tradeitems'
 
 const ROWS = 15
 const down = (v: number) => Math.floor(v * 0.9)
@@ -55,7 +56,21 @@ async function topTierRes(item: ParsedItem): Promise<(text: string, gen: string 
  * Оружие: общий DPS и моды, не влияющие на DPS/скорость атаки/шанс крита.
  * Остальные слоты: как раньше, но без дешёвых модов. Порог каждого значения — 90% от предмета.
  */
-export async function defaultFilters(item: ParsedItem): Promise<PriceCheckState> {
+export async function defaultFilters(item: ParsedItem, league?: string): Promise<PriceCheckState> {
+  // камни: только уровень, качество и статусы (моды и описание не нужны)
+  if (item.gem) {
+    const g = item.gem
+    const tf = await gemType(item.name).catch(() => ({ transfigured: false }))
+    const f: PcFilter[] = [
+      { key: 'base', label: item.name, kind: 'base', value: null, min: null, max: null, enabled: true, matched: true },
+      { key: 'gem_level', label: 'Gem Level', kind: 'gem', statId: 'gem_level', value: g.level, min: g.level, max: null, enabled: true, matched: true },
+      { key: 'quality', label: 'Quality', kind: 'quality', statId: 'quality', value: g.quality, min: g.quality || null, max: null, enabled: g.quality > 0, matched: true },
+      { key: 'corrupted', label: item.corrupted ? 'Corrupted' : 'Not Corrupted', kind: 'flag', statId: 'corrupted', value: item.corrupted ? 1 : 0, min: null, max: null, enabled: true, matched: true },
+      { key: 'gem_transfigured', label: tf.transfigured ? 'Transfigured' : 'Not Transfigured', kind: 'flag', statId: 'gem_transfigured', value: tf.transfigured ? 1 : 0, min: null, max: null, enabled: true, matched: true },
+      { key: 'gem_imbued', label: g.imbued ? 'Imbued' : 'Not Imbued', kind: 'flag', statId: 'gem_imbued', value: g.imbued ? 1 : 0, min: null, max: null, enabled: true, matched: true }
+    ]
+    return { item, filters: f }
+  }
   await ensureStats().catch(() => undefined)
   const f: PcFilter[] = []
   const unique = item.rarity === 'Unique'
@@ -63,7 +78,9 @@ export async function defaultFilters(item: ParsedItem): Promise<PriceCheckState>
   const d = item.props.defence
   const isWeapon = !!w
   const isArmour = !isWeapon && !!d && (!!d.ar || !!d.ev || !!d.es || !!d.ward)
-  f.push({ key: 'base', label: item.baseType, kind: 'base', value: null, min: null, max: null, enabled: unique, matched: true })
+  // база: у уникальных и флаконов (Silver, Bismuth… — разные предметы) включена сразу
+  f.push({ key: 'base', label: item.baseType, kind: 'base', value: null, min: null, max: null, enabled: unique || item.slot === 'flask', matched: true })
+  if (item.props.quality) f.push({ key: 'quality', label: 'Quality', kind: 'quality', statId: 'quality', value: item.props.quality, min: item.props.quality, max: null, enabled: false, matched: true })
   if (item.itemLevel) f.push({ key: 'ilvl', label: 'Item Level', kind: 'ilvl', value: item.itemLevel, min: item.itemLevel, max: null, enabled: false, matched: true })
 
   const t = totals(item)
@@ -109,16 +126,21 @@ export async function defaultFilters(item: ParsedItem): Promise<PriceCheckState>
       min: v != null && v > 0 ? down(v) : v, max: null, enabled: on, matched: !!hit
     })
   })
+  // неопознанный уникальный: имени нет — сначала выбор предмета из уникальных этой базы
+  if (unique && item.unidentified && item.name === item.baseType) {
+    const uniques = league ? await uniqueCandidates(league, item.baseType).catch(() => []) : []
+    return { item, filters: f, uniques }
+  }
   return { item, filters: f }
 }
 
 export async function pcSearch(league: string, item: ParsedItem, filters: PcFilter[]): Promise<PcResult> {
   const on = filters.filter((x) => x.enabled && x.matched)
   const base = on.find((x) => x.kind === 'base')
-  const rarity = item.rarity === 'Magic' ? 'magic' : item.rarity === 'Normal' ? 'normal' : item.rarity === 'Unique' ? 'unique' : 'rare'
-  const typeFilters: Record<string, unknown> = { rarity: { option: rarity } }
+  const rarity = item.gem ? null : item.rarity === 'Magic' ? 'magic' : item.rarity === 'Normal' ? 'normal' : item.rarity === 'Unique' ? 'unique' : 'rare'
+  const typeFilters: Record<string, unknown> = rarity ? { rarity: { option: rarity } } : {}
   const cat = categoryFor(item)
-  if (!base && cat) typeFilters.category = { option: cat }
+  if (!base && cat && !item.gem) typeFilters.category = { option: cat }
 
   const val = (x: PcFilter) => ({ ...(x.min != null ? { min: x.min } : {}), ...(x.max != null ? { max: x.max } : {}) })
   const weapon: Record<string, unknown> = {}
@@ -134,6 +156,8 @@ export async function pcSearch(league: string, item: ParsedItem, filters: PcFilt
     } else if (x.kind === 'weapon') weapon[x.statId!] = val(x)
     else if (x.kind === 'defence') armour[x.statId!] = val(x)
     else if (x.kind === 'ilvl') misc.ilvl = val(x)
+    else if (x.kind === 'quality' || x.kind === 'gem') misc[x.statId!] = val(x)
+    else if (x.kind === 'flag') misc[x.statId!] = { option: x.value ? 'true' : 'false' }
     else if (x.statId && x.kind !== 'base') stats.push({ id: x.statId, value: val(x) })
   }
   const fl: Record<string, unknown> = {
@@ -145,8 +169,19 @@ export async function pcSearch(league: string, item: ParsedItem, filters: PcFilt
   if (Object.keys(misc).length) fl.misc_filters = { filters: misc }
   if (Object.keys(socket).length) fl.socket_filters = { filters: socket }
   const query: Record<string, unknown> = { status: { option: 'available' }, stats: [{ type: 'and', filters: stats }], filters: fl }
-  if (base) query.type = item.baseType
-  if (rarity === 'unique') query.name = item.name
+  if (item.gem) {
+    // transfigured-камень трейд ищет как базовый камень + discriminator
+    if (base) {
+      const g = await gemType(item.name)
+      query.type = g.discriminator ? { option: g.option, discriminator: g.discriminator } : g.option
+    }
+  } else {
+    if (base) query.type = item.baseType
+    if (rarity === 'unique') {
+      query.name = item.name
+      query.type = item.baseType
+    }
+  }
 
   const s = await search(league, { query, sort: { price: 'asc' } })
   const page = await pcPage(league, item, s.id, s.result.slice(0, ROWS))
@@ -169,6 +204,10 @@ async function pcPage(league: string, item: ParsedItem, queryId: string, ids: st
       return {
         name: (l.item.name || l.item.typeLine).replace(/\[([^\]|]+)\|([^\]]+)\]/g, '$2'),
         ilvl: l.item.ilvl ?? null,
+        quality: listingToItem(l, item.slot).props.quality,
+        rarity: l.item.rarity ?? (item.gem ? 'Gem' : 'Rare'),
+        amount: p.amount,
+        currency: p.currency,
         price: `${p.amount} ${p.currency}`,
         priceDiv: (p.amount * rates.chaosPer[p.currency]) / rates.divine,
         item: listingToItem(l, item.slot)

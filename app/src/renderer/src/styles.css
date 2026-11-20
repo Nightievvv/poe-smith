@@ -179,8 +179,9 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; width: 100
 .pc-results { display: grid; gap: 6px; }
 .pc-results a { color: var(--brass); text-decoration: none; font-size: 12px; white-space: nowrap; }
 .pc-list { margin: 0; padding: 0; list-style: none; display: grid; font-size: 12.5px; }
-.pc-list > li { display: grid; grid-template-columns: 1fr 28px auto 64px; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--line); }
+.pc-list > li { display: grid; grid-template-columns: 1fr 34px 26px auto; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--line); }
 .pc-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6d36a; }
+.pc-name.r-unique { color: #c67a3c; } .pc-name.r-magic { color: #8888ff; } .pc-name.r-normal { color: #c8c8c8; } .pc-name.r-gem { color: #1ba29b; }
 
 /* крафт */
 .goal { background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 10px; display: grid; gap: 8px; }
@@ -339,3 +340,21 @@ html.stash-root, html.stash-root body, html.stash-root #root { background: trans
 .rx-items select { margin-left: 22px; width: calc(100% - 22px); font-size: 12px; padding: 2px 6px; }
 .rx-line.gen-prefix { color: #e6a35a; }
 .rx-line.gen-suffix { color: #7fb0e6; }
+
+.r-gem { color: #1ba29b; }
+/* неопознанный уникальный: плитки возможных предметов */
+.pc-uniques { display: grid; gap: 6px; }
+.uq-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.uq-tile { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; text-align: center; }
+.uq-tile:hover { border-color: var(--brass-dim); }
+.uq-tile img, .uq-noimg { width: 48px; height: 72px; object-fit: contain; }
+.uq-name { font-size: 12.5px; font-weight: 600; }
+
+/* докрафт */
+.craft-mode { max-width: 260px; }
+.craft-mode button { font-size: 13px; padding: 5px 10px; font-weight: 600; }
+.slots { white-space: nowrap; }
+.t-pre-c { color: #e6a35a; }
+.t-suf-c { color: #7fb0e6; }
+.rx-mods li.off label { opacity: .45; cursor: default; }
+.add-why { margin-left: 22px; font-size: 11px; }

@@ -45,6 +45,10 @@ interface Resolved {
   source: Source
   /** для модов влияния */
   inf?: (typeof INFLUENCES)[number] & { spawnTag: string }
+  /** докрафт: мод уже стоит на предмете и остаётся */
+  kept?: boolean
+  /** докрафт: мод нужно добавить */
+  added?: boolean
 }
 
 interface Primary {
@@ -69,6 +73,9 @@ export interface PlanOptions {
   basePrice?: (baseType: string, ilvl: number, maxIlvl: number | null) => Promise<{ chaos: number; count: number } | null>
   /** не ограничивать ilvl базы уровнем образца */
   ignoreIlvl?: boolean
+  /** докрафт: targetIdx — оставляемые моды предмета, остальные явные моды снимаются; add — моды игры, которые нужно добавить */
+  mode?: 'full' | 'finish'
+  add?: string[]
 }
 
 /** «+42 to maximum Mana» → «+ to maximum Mana»: в шагах показываем тир, а не конкретное значение. */
@@ -214,6 +221,21 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     }
     return r
   })
+  const finish = opts.mode === 'finish'
+  if (finish) {
+    for (const r of resolvedRaw) r.kept = true
+    const cleanText = (t: string) => t.replace(/\[([^\]|]+)\|([^\]]+)\]/g, '$2').replace(/\[([^\]]+)\]/g, '$1')
+    for (const id of opts.add ?? []) {
+      const mod = d.mods.get(id)
+      if (!mod || (mod.gen !== 'prefix' && mod.gen !== 'suffix')) continue
+      // текст с минимальным значением тира: «+(36-41)% to Cold Resistance» → «+36% to Cold Resistance»
+      const text = cleanText(mod.text).split('\n')[0].replace(/\((-?[\d.]+)-(-?[\d.]+)\)/g, '$1')
+      const b = mod.domain === 'crafted' ? benchForClass.find((x) => x.modId === id) : undefined
+      resolvedRaw.push(b
+        ? { text, kind: 'crafted', gen: mod.gen as Side, mod, bench: b, source: 'bench', added: true }
+        : { text, kind: 'explicit', gen: mod.gen as Side, mod, source: 'explicit', added: true })
+    }
+  }
   // строки одного гибридного мода (например, «+354 to Armour» и «+352 to Evasion Rating») — это один мод, а не два
   const resolved: Resolved[] = []
   for (const r of resolvedRaw) {
@@ -244,7 +266,9 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
 
   // не больше одного крафтового мода на предмете
   const craftedTargets = resolved.filter((r) => r.source === 'bench')
-  if (craftedTargets.length > 1) {
+  if (craftedTargets.length > 1 && finish)
+    warnings.push(T('На предмете будет больше одного мода с верстака — понадобится мультимод «Can have up to 3 Crafted Modifiers».', 'More than one bench craft: you need the multimod "Can have up to 3 Crafted Modifiers".'))
+  if (craftedTargets.length > 1 && !finish) {
     warnings.push(T('На предмете может быть только один мод с верстака — оставляю первый, остальные будут случайными аффиксами.',
       'An item can hold only one bench craft: keeping the first, the rest become random affixes.'))
     for (const r of craftedTargets.slice(1)) {
@@ -272,7 +296,8 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   }
   const levels = [...new Set(pool.map((m) => m.reqLevel))].sort((a, b) => a - b)
   let craftIlvl = need
-  if (explicit.length) {
+  if (finish) craftIlvl = ilvl // докрафт: ilvl предмета не меняется
+  else if (explicit.length) {
     let bestScore = -Infinity
     for (const L of [need, ...levels.filter((l) => l > need && l <= capIlvl)]) {
       const score = explicit.reduce((a, r) => a + Math.log(Math.max(1e-12, shareAt(r, L))), 0)
@@ -280,7 +305,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     }
   } else craftIlvl = Math.max(need, Math.min(ilvl, capIlvl))
   const nextLevel = levels.find((l) => l > craftIlvl)
-  const ilvlMax: number | null = opts.ignoreIlvl
+  const ilvlMax: number | null = finish ? ilvl : opts.ignoreIlvl
     ? (explicit.length && nextLevel ? nextLevel - 1 : null)
     : Math.max(craftIlvl, Math.min(capIlvl, explicit.length && nextLevel ? nextLevel - 1 : capIlvl))
   const ilvlRange = ilvlMax == null ? `${craftIlvl}+` : ilvlMax === craftIlvl ? String(craftIlvl) : `${craftIlvl}–${ilvlMax}`
@@ -394,7 +419,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
 
   // ---------- основные методы ----------
   const primaries: Primary[] = []
-  if (explicit.length) {
+  if (explicit.length && !finish) {
     const others = (main: Resolved) => explicit.filter((x) => x !== main)
     const extrasNote = (main: Resolved): StepLine[] =>
       others(main).length
@@ -648,7 +673,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   }
 
   // Awakener's Orb: два мода разных влияний на одном предмете
-  if (infGroups.length >= 2) {
+  if (infGroups.length >= 2 && !finish) {
     const [ga, gb] = infGroups.map((g) => [...g].sort((a, b) => infShare(a) - infShare(b)))
     const a = ga[0]
     const b = gb[0]
@@ -754,7 +779,10 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     // другая сторона уже занята нужными модами — Exalted гарантированно ляжет в нужную сторону
     const otherFull = otherP.length >= maxSide
     const q = otherFull ? 1 : W(side) / Math.max(1e-9, W(side) + W(otherSide))
-    const title = (how: string) => T(`Если «${label(r)}» не выпал: ${how}`, `If "${label(r)}" is missing: ${how}`)
+    // докрафт: новый мод — «Добавить», снятый вместе со стороной — «Вернуть»
+    const title = (how: string) => r.added ? T(`Добавить «${label(r)}»: ${how}`, `Add "${label(r)}": ${how}`)
+      : r.kept ? T(`Вернуть «${label(r)}»: ${how}`, `Restore "${label(r)}": ${how}`)
+        : T(`Если «${label(r)}» не выпал: ${how}`, `If "${label(r)}" is missing: ${how}`)
     const lossLine = (loss: number, who = "Annulment"): StepLine[] =>
       loss > 0.5 ? [T(`${who} может снять уже полученный нужный мод — в цену заложена его повторная доводка (~${fmtC(loss)}).`, `${who} may remove a wanted mod already on the item: re-finishing it is included (~${fmtC(loss)}).`)] : []
     const annulLines = (n: number): StepLine[] => [
@@ -943,7 +971,8 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   const mechOk = (ms: Iterable<string>) => !capOn || new Set([...ms].filter((m) => !HELPERS.has(m))).size <= 3
   interface FinishSet { steps: CraftStep[]; weighted: { cs: CraftCost[]; k: number; extra?: number }[]; mech: Set<string> }
   const withNeed = (s: CraftStep, needP: number, extra: StepLine[]): CraftStep => ({
-    ...s, lines: [...(s.lines ?? []), T(`Понадобится с вероятностью ≈ ${pct(needP)}.`, `Needed with ≈ ${pct(needP)} probability.`), ...extra]
+    ...s, ...(needP >= 0.999 ? { optional: false } : {}),
+    lines: [...(s.lines ?? []), ...(needP < 0.999 ? [T(`Понадобится с вероятностью ≈ ${pct(needP)}.`, `Needed with ≈ ${pct(needP)} probability.`)] : []), ...extra]
   })
   /** доп. стоимость, не выраженная в валюте шага (риск снять нужные моды) */
   const extraChaos = (f: Finish) => f.chaos - f.steps.reduce((a, s) => a + sum(s.currency), 0)
@@ -1197,9 +1226,9 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       bpError = true
     }
   }
-  const baseWarn = defenceCheck()
+  const baseWarn = finish ? [] : defenceCheck()
   const baseCost: CraftCost[] = bp ? [{ name: T(`${base.name}, ilvl ${ilvlRange} (трейд)`, `${base.name}, ilvl ${ilvlRange} (trade)`), count: '×1', chaos: bp.chaos }] : []
-  const head: CraftStep[] = [{
+  const head: CraftStep[] = finish ? [] : [{
     kind: 'base', method: 'Base',
     title: T(`База: ${base.name}, ilvl ${ilvlRange}`, `Base: ${base.name}, ilvl ${ilvlRange}`),
     lines: [
@@ -1220,7 +1249,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     station: T('Трейд или дроп', 'Trade or drops'), farm: stage
   }]
   const tail: CraftStep[] = []
-  for (const r of craftedTargets.slice(0, 1)) {
+  for (const r of finish ? craftedTargets.filter((x) => x.added) : craftedTargets.slice(0, 1)) {
     const b = r.bench!
     tail.push({ kind: 'bench', method: 'Bench', title: T(`Верстак: «${d.mods.get(b.modId)?.text.replace(/\n/g, ' / ') ?? r.text}»`, `Crafting bench: "${d.mods.get(b.modId)?.text.replace(/\n/g, ' / ') ?? r.text}"`),
       lines: [T('Последним шагом крафта.', 'The last crafting step.'), T('Без мультимода на предмете может быть только один мод с верстака.', 'Without multimod an item holds only one bench craft.')],
@@ -1270,6 +1299,8 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
         T(`Нужный исход ≈ 1 из ${Math.round(tries)}.`, `About 1 in ${Math.round(tries)}.`)],
       currency: [costA('Vaal Orb', tries)], station: INV, farm: farm('Vaal Orb') })
   }
+  // докрафт: имплиситы, качество, связи и порча уже на предмете — остаются только новые моды верстака
+  if (finish) tail.splice(0, tail.length, ...tail.filter((x) => x.kind === 'bench'))
   const tailMech = [...new Set(tail.flatMap((s) => (s.method === 'Eldritch' ? ['Eldritch'] : s.method === 'Bench' ? ['Bench'] : [])))]
 
   // ---------- собираем варианты ----------
@@ -1309,17 +1340,110 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   const out: (CraftVariant & { key: string })[] = []
   const withTail = (m: Iterable<string>) => [...new Set([...m, ...tailMech])]
 
-  if (!explicit.length && !infGroups.length) out.push({ key: 'tail', name: T('Имплиситы и финиш', 'Implicits and finish'), mechanics: tailMech, notes: [], ...parts([], []) })
-  if (infGroups.length >= 2)
+  if (!finish && !explicit.length && !infGroups.length) out.push({ key: 'tail', name: T('Имплиситы и финиш', 'Implicits and finish'), mechanics: tailMech, notes: [], ...parts([], []) })
+  if (infGroups.length >= 2 && !finish)
     warnings.push(T(`На предмете моды двух влияний (${infGroups.map((g) => g[0].inf!.name).join(' + ')}) — собрать их можно только через Awakener's Orb, поэтому другие варианты не показаны.`,
       `The item has mods of two influences (${infGroups.map((g) => g[0].inf!.name).join(' + ')}); only Awakener's Orb combines them, so other options are hidden.`))
-  if (!explicit.length && infGroups.length === 1) {
+  if (!finish && !explicit.length && infGroups.length === 1) {
     const inf = influenceSteps(new Set(), infGroups.slice(0, 1))
     out.push({ key: 'influence', name: T('Влияние + бист-крафт', 'Influence + beastcraft'), mechanics: withTail(['Influence', 'Beastcraft']), notes: [],
       ...parts(inf.steps, inf.steps.map((s) => ({ cs: s.currency, k: 1 }))) })
   }
+  /**
+   * Докрафт: как снять моды без галочки. Снять конкретный мод валютой нельзя — считаем ожидаемые затраты:
+   * Annulment бьёт случайный мод (k ненужных из N): в среднем k(N+1)/(k+1) сфер и n·k/(k+1) снятых нужных модов;
+   * Eldritch Annulment — то же внутри одной стороны; мета-мод на другую сторону + Scouring снимает всю сторону целиком
+   * (оставляемые моды этой стороны тогда доводятся заново). Моды верстака снимаются верстаком.
+   */
+  function finishPrimaries(): Primary[] {
+    const keptIdx = new Set(targetIdx)
+    const gone = item.mods
+      .map((m, idx) => ({ m, idx }))
+      .filter(({ m, idx }) => !keptIdx.has(idx) && (m.kind === 'explicit' || m.kind === 'crafted'))
+    const goneCrafted = gone.filter((g) => g.m.kind === 'crafted')
+    // явные снимаемые моды — по модам игры (строки гибрида — один мод)
+    const goneMods = new Map<string, Side>()
+    for (const g of gone.filter((x) => x.m.kind === 'explicit')) {
+      const mod = pool.filter((x) => (!g.m.gen || x.gen === g.m.gen) && fits(x, g.m.text)).sort((a, b) => b.reqLevel - a.reqLevel)[0]
+      goneMods.set(mod?.id ?? 'line' + g.idx, ((mod?.gen ?? g.m.gen) as Side) ?? 'prefix')
+    }
+    const keptReal = explicit.filter((r) => r.kept)
+    const already = (lostSide?: Side) => (r: Resolved) => (r.added || (lostSide && r.kept && r.gen === lostSide) ? 0 : 1)
+    const NONE = undefined as unknown as Resolved
+    const benchRemove: CraftStep[] = goneCrafted.length
+      ? [{ kind: 'bench', method: 'Bench', title: T('Верстак: снять моды с верстака («Remove Crafted Modifiers»)', 'Bench: remove crafted modifiers'),
+        lines: [T('Снимает все моды с верстака, остальные не трогает.', 'Removes all bench crafts; other mods stay.')], currency: [cost('Orb of Scouring', 1)], station: BENCH, farm: farm('Orb of Scouring') }]
+      : []
+    const k = goneMods.size
+    const out: Primary[] = []
+    const name = (x: string) => T(`Докрафт: ${x}`, `Finish: ${x}`)
+    if (!k) {
+      out.push({ key: 'finish', name: T('Докрафт', 'Finish'), mechanics: benchRemove.length ? ['Bench'] : [], steps: benchRemove, chaos: sum(benchRemove.flatMap((x) => x.currency)), main: NONE, notes: [], already: already() })
+      return out
+    }
+    const goneLines = gone.filter((g) => g.m.kind === 'explicit').map((g) => ({ mod: g.m.text, gen: g.m.gen }) as StepLine)
+    // а) Orb of Annulment
+    {
+      const n = keptReal.length
+      const N = k + n
+      const annuls = (k * (N + 1)) / (k + 1)
+      const lost = (n * k) / (k + 1)
+      const loss = lost * avgRefin(keptReal)
+      const step: CraftStep = { kind: 'explicit', method: 'Currency', title: T('Orb of Annulment, пока не уйдут ненужные моды', 'Orb of Annulment until the unwanted mods are gone'),
+        lines: [T('Снять:', 'Remove:'), ...goneLines, T(`Первая сфера попадёт в ненужный мод с шансом ≈ ${pct(k / N)}.`, `The first orb hits an unwanted mod ≈ ${pct(k / N)} of the time.`),
+          ...(n ? [T(`Промах снимает нужный мод (в среднем ~${fmtN(lost)}) — его повторная доводка ~${fmtC(loss)}.`, `A miss removes a wanted mod (~${fmtN(lost)} on average); re-finishing it ~${fmtC(loss)}.`)] : [])],
+        currency: [costA('Orb of Annulment', annuls)], station: INV, farm: farm('Orb of Annulment'), lossChaos: loss }
+      out.push({ key: 'finish-annul', name: name('Orb of Annulment'), mechanics: ['Currency', ...(benchRemove.length ? ['Bench'] : [])], steps: [...benchRemove, step],
+        chaos: sum([...benchRemove, step].flatMap((x) => x.currency)) + loss, main: NONE, notes: [], already: already() })
+    }
+    // б) Eldritch Orb of Annulment: снимает мод только доминирующей стороны
+    if (ELDRITCH_CLASSES.has(base.itemClass) && prices.has('Eldritch Orb of Annulment')) {
+      const steps: CraftStep[] = [...benchRemove]
+      let loss = 0
+      for (const side of ['prefix', 'suffix'] as Side[]) {
+        const ks = [...goneMods.values()].filter((g) => g === side).length
+        if (!ks) continue
+        const keptSide = keptReal.filter((r) => r.gen === side)
+        const N = ks + keptSide.length
+        const annuls = (ks * (N + 1)) / (ks + 1)
+        const lost = (keptSide.length * ks) / (ks + 1)
+        const l = lost * avgRefin(keptSide)
+        loss += l
+        const dom = side === 'prefix' ? 'Searing Exarch' : 'Eater of Worlds'
+        const setup = side === 'prefix' ? 'Lesser Eldritch Ember' : 'Lesser Eldritch Ichor'
+        steps.push({ kind: 'explicit', method: 'Eldritch', title: T(`Eldritch Orb of Annulment при доминировании ${dom}`, `Eldritch Orb of Annulment with ${dom} dominance`),
+          lines: [T(`Снимает только ${side === 'prefix' ? 'префиксы' : 'суффиксы'}: другая сторона в безопасности.`, `Removes only ${side}es: the other side is safe.`),
+            T(`Доминирование ${dom} — его имплисит выше тиром; если имплиситов нет — ${setup}.`, `${dom} dominance: its implicit has the higher tier; without implicits use ${setup}.`),
+            T(`Первая сфера попадёт в ненужный мод с шансом ≈ ${pct(ks / N)}.`, `The first orb hits an unwanted mod ≈ ${pct(ks / N)} of the time.`),
+            ...(keptSide.length ? [T(`Промах снимает нужный мод этой стороны — повторная доводка ~${fmtC(l)}.`, `A miss removes a wanted mod on this side; re-finishing ~${fmtC(l)}.`)] : [])],
+          currency: [cost(setup, 1), costA('Eldritch Orb of Annulment', annuls)], station: INV, farm: farm('Eldritch'), lossChaos: l })
+      }
+      out.push({ key: 'finish-eldritch', name: name('Eldritch Annulment'), mechanics: ['Eldritch', ...(benchRemove.length ? ['Bench'] : [])], steps,
+        chaos: sum(steps.flatMap((x) => x.currency)) + loss, main: NONE, notes: [], already: already() })
+    }
+    // в) все снимаемые моды на одной стороне: закрепить другую сторону мета-модом и снять эту Orb of Scouring
+    const sides = new Set(goneMods.values())
+    if (sides.size === 1) {
+      const side = [...sides][0]
+      const other: Side = side === 'prefix' ? 'suffix' : 'prefix'
+      const meta = metaFor(other)
+      if (meta) {
+        const keptSide = keptReal.filter((r) => r.gen === side)
+        const cs = [...meta.cost.map((c) => cost(c.name, c.count)), cost('Orb of Scouring', 1)]
+        const step: CraftStep = { kind: 'bench', method: 'Meta-craft', title: T(`Мета-крафт «${d.mods.get(meta.modId)?.text}» → Orb of Scouring`, `Meta-craft "${d.mods.get(meta.modId)?.text}" → Orb of Scouring`),
+          lines: [T(`${other === 'prefix' ? 'Префиксы' : 'Суффиксы'} закреплены, Scouring снимает все ${side === 'prefix' ? 'префиксы' : 'суффиксы'} — без промахов.`, `${other === 'prefix' ? 'Prefixes' : 'Suffixes'} are locked; Scouring removes every ${side} — no misses.`),
+            ...(keptSide.length ? [T('Оставляемые моды этой стороны тоже уйдут — они ниже в доводке:', 'Kept mods on this side go too; they are re-added below:'), ...modLines(keptSide)] : [])],
+          currency: cs, station: BENCH, farm: farm('Divine Orb') }
+        out.push({ key: 'finish-lock', name: name(T('закрепить сторону + Scouring', 'lock a side + Scouring')), mechanics: ['Meta-craft', ...(benchRemove.length ? ['Bench'] : [])],
+          steps: [...benchRemove, step], chaos: sum([...benchRemove, step].flatMap((x) => x.currency)), main: NONE, notes: [], already: already(side) })
+      }
+    }
+    return out
+  }
+
   // кандидатов основного метода много (разные точки остановки): по быстрой оценке доводки оставляем по два на метод
   const fsCost = (fs: FinishSet) => fs.weighted.reduce((a, w) => a + (sum(w.cs) + (w.extra ?? 0)) * w.k, 0)
+  if (finish) primaries.push(...finishPrimaries())
   const shortlist: Primary[] = []
   {
     const byKey = new Map<string, { pr: Primary; c: number }[]>()
@@ -1336,7 +1460,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     const notes = [...pr.notes]
     // моды влияния: Awakener уже дал по одному моду двух влияний; иначе — только одно влияние
     const groups = pr.key === 'awakener' ? infGroups.slice(0, 2) : infGroups.slice(0, 1)
-    const infPart = groups.length ? influenceSteps(new Set<Resolved>(influenced.filter((r) => pr.already(r) >= 1)), groups) : null
+    const infPart = groups.length && !finish ? influenceSteps(new Set<Resolved>(influenced.filter((r) => pr.already(r) >= 1)), groups) : null
     if (groups.length && pr.key !== 'awakener' && infGroups.length > 1)
       notes.push(T(`Второе влияние (${infGroups[1][0].inf!.name}) этим путём не получить — смотрите вариант с Awakener's Orb.`, `The second influence (${infGroups[1][0].inf!.name}) needs the Awakener's Orb option.`))
     if (pr.chaos > 0 && divine && pr.chaos > 50 * divine)
@@ -1344,7 +1468,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     const build = (fs: FinishSet) => {
       const mech = new Set([...pr.mechanics, ...fs.mech])
       const body = [...pr.steps, ...fs.steps]
-      const weighted = [...pr.steps.map((s) => ({ cs: s.currency, k: 1 })), ...fs.weighted]
+      const weighted = [...pr.steps.map((s) => ({ cs: s.currency, k: 1, extra: s.lossChaos ?? 0 })), ...fs.weighted]
       if (infPart) {
         body.push(...infPart.steps)
         for (const s of infPart.steps) weighted.push({ cs: s.currency, k: 1 })

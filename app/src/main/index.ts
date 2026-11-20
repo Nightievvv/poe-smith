@@ -26,6 +26,7 @@ import { appIcon, createTray } from './tray'
 import { exchangeData, exchangeIcons } from './poe1/exchange'
 import { mapMods } from './poe1/mapmods'
 import { itemBases, itemMods } from './poe1/itemmods'
+import { addableFor } from './poe1/addable'
 import { closeStash, debugStash, stashVisible, stashWindow, toggleStash } from './stash'
 import { checkForUpdates, downloadUpdate, initUpdater, installUpdate, updateState } from './updater'
 
@@ -186,7 +187,7 @@ async function readItem(mode: 'read' | 'price') {
     send({ type: 'hotkey', id: 'read' })
     return
   }
-  pcState = await defaultFilters(item)
+  pcState = await defaultFilters(item, await currentLeague().catch(() => undefined))
   showPriceCheck()
 }
 
@@ -305,6 +306,7 @@ ipcMain.handle('exchange:icons', async (_e, ids?: string[]) => exchangeIcons(awa
 ipcMain.handle('maps:mods', () => mapMods())
 ipcMain.handle('items:bases', () => itemBases())
 ipcMain.handle('items:mods', (_e, base: string) => itemMods(base))
+ipcMain.handle('craft:addable', (_e, item: ParsedItem) => addableFor(item))
 ipcMain.on('stash:close', () => closeStash())
 if (process.env.POESMITH_DEBUG) ipcMain.handle('debug:stashLive', () => toggleStash({ load: rendererUrl, league: currentLeague, icon: appIcon() }))
 if (process.env.POESMITH_DEBUG) ipcMain.handle('debug:stash', (_e, path: string) => debugStash({ load: rendererUrl, league: currentLeague, icon: appIcon() }, path))
@@ -346,7 +348,7 @@ if (process.env.POESMITH_DEBUG || process.env.EXILE_FORGE_DEBUG) {
     if (!item) return false
     if (mode === 'read') send({ type: 'item', item, mode })
     else {
-      pcState = await defaultFilters(item)
+      pcState = await defaultFilters(item, await currentLeague().catch(() => undefined))
       showPriceCheck()
     }
     return true
@@ -359,7 +361,7 @@ ipcMain.handle('craft:status', () => craftStatus())
 // рыночная цена целевого предмета: медиана 10 самых дешёвых похожих лотов
 ipcMain.handle('craft:value', async (_e, item: ParsedItem): Promise<ValueEstimate> => {
   try {
-    const st = await defaultFilters(item)
+    const st = await defaultFilters(item, await currentLeague().catch(() => undefined))
     const r = await pcSearch(await currentLeague(), item, st.filters)
     const vals = r.rows.slice(0, 10).map((x) => x.priceDiv).sort((a, b) => a - b)
     const mid = vals.length ? (vals.length % 2 ? vals[(vals.length - 1) / 2] : (vals[vals.length / 2 - 1] + vals[vals.length / 2]) / 2) : 0
@@ -375,7 +377,9 @@ ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lan
     return await buildPlan(item, targets, lang, league, {
       customPrices: settings.customPrices,
       ignoreIlvl: !!popts?.ignoreIlvl,
-      basePrice: (baseType, lvl, max) => basePrice(league, baseType, lvl, max)
+      mode: popts?.mode,
+      add: popts?.add,
+      basePrice: popts?.mode === 'finish' ? undefined : (baseType, lvl, max) => basePrice(league, baseType, lvl, max)
     })
   } finally {
     sendLimits()

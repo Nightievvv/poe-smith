@@ -70,4 +70,7 @@ npm run release  # установщик + GitHub Release (только вруч�
    - Вкладка «Валюта» (`CurrencyTab.tsx`, `src/main/poe1/exchange.ts`): биржа poe.ninja — цена, тренд 7 дней, объём в час, сортировка, поиск.
    - Вкладка «Regex» (`RegexTab.tsx`): Maps — моды карт, добыча, качество, состояние (`src/shared/mapregex.ts`, данные `mapmods.ts`); Items — тип и база предмета, моды с минимальным тиром (`src/shared/itemregex.ts`, `itemmods.ts`).
    - Оверлей цен на складе (Ctrl+Shift+D, `src/main/stash.ts`, `StashApp.tsx`, `stash/vision.ts`): снимок окна игры, поиск занятых ячеек по синему фону, сравнение иконок с poe.ninja, чтение количества по эталонам цифр (`stash/digits.ts`). Пока открыт — переснимает экран раз в 1.5 с и сам прячется, когда склад закрыт. Отладка: `window.debug.stash(pngPath)` с `POESMITH_DEBUG=1`.
-6. Модуль PoE 2.
+6. Версия 0.5.0 — **готово**:
+   - Прайс-чек: фильтр качества (выключен по умолчанию), база фляг включена по умолчанию, гемы — по точному названию (transfigured — с discriminator трейда) с фильтрами уровня, качества, Corrupted/Transfigured/Imbued; неопознанный уникальный — выбор плиткой (данные трейда + иконки и цены poe.ninja, `tradeitems.ts`); в строках лотов качество, цена числом с иконкой и цвет редкости.
+   - Планировщик: режим «Докрафт» (`addable.ts`, `CraftPlanOptions.mode/add`): оставить/снять моды предмета, добавить моды с минимальным тиром, счётчик слотов; снятие — Annulment, Eldritch Annulment или мета-крафт + Scouring.
+7. Модуль PoE 2.

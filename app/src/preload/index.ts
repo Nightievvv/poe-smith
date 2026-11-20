@@ -38,6 +38,7 @@ const api: Api = {
   mapMods: () => ipcRenderer.invoke('maps:mods'),
   itemBases: () => ipcRenderer.invoke('items:bases'),
   itemMods: (base) => ipcRenderer.invoke('items:mods', base),
+  craftAddable: (item) => ipcRenderer.invoke('craft:addable', item),
   updateState: () => ipcRenderer.invoke('update:get'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),

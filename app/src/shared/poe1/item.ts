@@ -16,7 +16,7 @@ export const slotOfClass = (itemClass: string, baseType: string): SlotId | null 
   return slot
 }
 
-const FLAGS = /^(Corrupted|Mirrored|Unidentified|Split|Synthesised Item|Fractured Item|Shaper Item|Elder Item|Crusader Item|Hunter Item|Redeemer Item|Warlord Item|Searing Exarch Item|Eater of Worlds Item|Unmodifiable)$/
+const FLAGS = /^(Corrupted|Mirrored|Unidentified|Split|Synthesised Item|Fractured Item|Shaper Item|Elder Item|Crusader Item|Hunter Item|Redeemer Item|Warlord Item|Searing Exarch Item|Eater of Worlds Item|Unmodifiable|Imbued)$/
 const PROP_SECTION = /^(Requirements|Requires|Sockets|Quality|Physical Damage|Elemental Damage|Chaos Damage|Critical Strike Chance|Attacks per Second|Weapon Range|Armour|Evasion Rating|Energy Shield|Ward|Chance to Block|Level|Str|Dex|Int|Stack Size|Limited to|Radius|Recovers|Consumes|Currently has|Lasts|Note|Item Level)\b/
 const TAG_RE = /\s*\((implicit|enchant|crafted|fractured|scourge|crucible)\)$/
 
@@ -124,6 +124,7 @@ export function parseItem(text: string): ParsedItem | null {
   // ---- моды: всё после Item Level ----
   const mods: ItemMod[] = []
   let corrupted = false
+  const flagLines = new Set(lines.filter((l) => FLAGS.test(l)))
   for (const s of sections.slice(ilvlIdx >= 0 ? ilvlIdx + 1 : 1)) {
     if (!s.length || (PROP_SECTION.test(s[0]) && !s[0].startsWith('{'))) continue
     let header: ReturnType<typeof parseHeader> | null = null
@@ -154,7 +155,18 @@ export function parseItem(text: string): ParsedItem | null {
     }
   }
 
-  return { itemClass, rarity, name, baseType, itemLevel, slot: slotOfClass(itemClass, baseType), mods, props, corrupted }
+  // камни умений: уровень — первая строка «Level:» в блоке свойств (дальше идут требования)
+  let gem: ParsedItem['gem']
+  if (/Gems?$/.test(itemClass) || rarity === 'Gem') {
+    const lvl = sections[1]?.find((l) => /^Level: \d+/.test(l))
+    gem = { level: lvl ? num(lvl) : 1, quality: props.quality ?? 0, imbued: flagLines.has('Imbued'), vaal: /^Vaal /.test(name) }
+    corrupted = flagLines.has('Corrupted')
+    mods.length = 0 // описание камня — не моды
+  }
+  return {
+    itemClass, rarity, name, baseType, itemLevel, slot: slotOfClass(itemClass, baseType), mods, props, corrupted,
+    ...(flagLines.has('Unidentified') ? { unidentified: true } : {}), ...(gem ? { gem } : {})
+  }
 }
 
 export const isImplicit = (m: ItemMod) => m.kind === 'implicit' || m.kind === 'enchant'

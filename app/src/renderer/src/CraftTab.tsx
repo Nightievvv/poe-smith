@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { CraftDataStatus, CraftPlan, CraftVariant, Lang, ParsedItem, StepLine } from '../../shared/types'
+import type { AddableData, CraftDataStatus, CraftPlan, CraftVariant, Lang, ParsedItem, StepLine } from '../../shared/types'
 import type { T } from './i18n'
 import { ItemCard, genClass } from './ItemCard'
 import { errText } from './format'
@@ -71,6 +71,11 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
   // доводка: для всех модов сразу или для каждого по отдельности
   const [mode, setMode] = useState<'joint' | 'single'>('joint')
   const [ignoreIlvl, setIgnoreIlvl] = useState(false)
+  // полный крафт (как раньше) или докрафт этого предмета
+  const [craftMode, setCraftMode] = useState<'full' | 'finish'>('full')
+  const [addable, setAddable] = useState<AddableData | null>(null)
+  const [picks, setPicks] = useState<{ gid: string; tier: number }[]>([])
+  const [addQ, setAddQ] = useState('')
 
   useEffect(() => {
     window.api.craftDataStatus().then(setData)
@@ -82,6 +87,9 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
   // новый предмет: по умолчанию цель — все моды предмета
   useEffect(() => {
     setSelected(item ? item.mods.map(() => true) : [])
+    setPicks([])
+    setAddable(null)
+    if (item) window.api.craftAddable(item).then(setAddable).catch(() => setAddable(null))
     setPlan(null)
     setIgnoreIlvl(false)
     setError(null)
@@ -136,8 +144,11 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
     setBusy(true)
     setError(null)
     try {
-      const idx = selected.map((s, i) => (s ? i : -1)).filter((i) => i >= 0)
-      const p = await window.api.craftPlan(item, idx, lang, { ignoreIlvl: ign })
+      const finish = craftMode === 'finish'
+      // докрафт: имплиситы и энчанты всегда остаются; снимаются только явные моды без галочки
+      const idx = selected.map((s, i) => (s || (finish && (item.mods[i].kind === 'implicit' || item.mods[i].kind === 'enchant')) ? i : -1)).filter((i) => i >= 0)
+      const add = finish ? picks.map((p) => addable?.groups.find((g) => g.id === p.gid)?.tiers[p.tier]?.id).filter((x): x is string => !!x) : undefined
+      const p = await window.api.craftPlan(item, idx, lang, { ignoreIlvl: ign, mode: craftMode, add })
       setPlan(p)
       const first = order(p, mode)[0]?.i ?? 0
       setVi(first)
@@ -160,11 +171,78 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
       </>
     )
 
+  // занятые и свободные слоты: отмеченные моды предмета + выбранные для докрафта
+  const finish = craftMode === 'finish'
+  const slots = { prefix: 0, suffix: 0 }
+  for (const e of addable?.existing ?? []) if (selected[e.idx] && e.gen) slots[e.gen]++
+  if (finish) for (const p of picks) { const g = addable?.groups.find((x) => x.id === p.gid); if (g) slots[g.gen]++ }
+  const maxSide = addable?.maxSide ?? 3
+  const usedGroups = new Set<string>([
+    ...(addable?.existing ?? []).filter((e) => selected[e.idx]).flatMap((e) => e.groups),
+    ...(finish ? picks.flatMap((p) => addable?.groups.find((x) => x.id === p.gid)?.groups ?? []) : [])
+  ])
+  const toggle = (i: number) => {
+    const e = addable?.existing.find((x) => x.idx === i || x.extra.includes(i))
+    if (finish && e?.locked) return // fractured не снять
+    const lines = e ? [e.idx, ...e.extra] : [i]
+    setSelected((s) => { const v = !s[i]; return s.map((x, j) => (lines.includes(j) ? v : x)) })
+  }
+  const slotChip = (
+    <span className="slots mono small">
+      <span className={slots.prefix > maxSide ? 'err' : 't-pre-c'}>{t('craft.prefixes')} {slots.prefix}/{maxSide}</span>
+      {' · '}
+      <span className={slots.suffix > maxSide ? 'err' : 't-suf-c'}>{t('craft.suffixes')} {slots.suffix}/{maxSide}</span>
+    </span>
+  )
+  const sq = addQ.trim().toLowerCase()
+
   return (
     <>
-      <ItemCard item={item} t={t} onClose={onClose} selected={selected}
-        onToggle={(i) => setSelected((s) => s.map((v, j) => (j === i ? !v : v)))} />
-      <p className="muted small">{t('craft.pickHint')}</p>
+      <div className="seg craft-mode" role="tablist">
+        {(['full', 'finish'] as const).map((m) => (
+          <button key={m} role="tab" aria-pressed={craftMode === m} aria-selected={craftMode === m}
+            onClick={() => { setCraftMode(m); setPlan(null) }}>{t(m === 'full' ? 'craft.modeFull' : 'craft.modeFinish')}</button>
+        ))}
+      </div>
+      <ItemCard item={item} t={t} onClose={onClose} selected={selected} onToggle={toggle} extra={addable ? slotChip : undefined} />
+      <p className="muted small">{t(finish ? 'craft.finishHint' : 'craft.pickHint')}</p>
+      {finish && addable?.blocked === 'corrupted' && <p className="note warn">{t('craft.finishCorrupted')}</p>}
+      {finish && addable && !addable.blocked && (
+        <section className="rx-sec add-mods">
+          <h3>{t('craft.addMods')} <span className="muted small">{picks.length ? `(${picks.length})` : ''}</span></h3>
+          <input type="text" value={addQ} placeholder={t('rx.filter')} aria-label={t('rx.filter')} onChange={(e) => setAddQ(e.target.value)} />
+          <ul className="rx-mods rx-items">
+            {addable.groups
+              .filter((g) => !sq || g.text.toLowerCase().includes(sq))
+              .sort((a, b) => Number(picks.some((p) => p.gid === b.id)) - Number(picks.some((p) => p.gid === a.id)))
+              .map((g) => {
+                const pick = picks.find((p) => p.gid === g.id)
+                const why = pick ? null
+                  : g.groups.some((x) => usedGroups.has(x)) ? t('craft.addSameGroup')
+                    : slots[g.gen] >= maxSide ? t(g.gen === 'prefix' ? 'craft.addNoPrefix' : 'craft.addNoSuffix')
+                      : g.bench && (addable.existing.some((e) => e.crafted && selected[e.idx]) || picks.some((p) => addable.groups.find((x) => x.id === p.gid)?.bench)) ? t('craft.addOneBench')
+                        : null
+                return (
+                  <li key={g.id} className={why ? 'off' : undefined} title={why ?? undefined}>
+                    <label>
+                      <input type="checkbox" checked={!!pick} disabled={!!why}
+                        onChange={(e) => setPicks((ps) => (e.target.checked ? [...ps, { gid: g.id, tier: 0 }] : ps.filter((p) => p.gid !== g.id)))} />
+                      <span className={'rx-line gen-' + g.gen}>{g.text}</span>
+                      {g.bench && <span className="rx-badge">{t('craft.benchBadge')}</span>}
+                    </label>
+                    {why && <span className="muted small add-why">{why}</span>}
+                    {pick && g.tiers.length > 1 && (
+                      <select value={pick.tier} aria-label={t('rx.minTier')}
+                        onChange={(e) => setPicks((ps) => ps.map((p) => (p.gid === g.id ? { ...p, tier: Number(e.target.value) } : p)))}>
+                        {g.tiers.map((x, i) => <option key={i} value={i}>≥T{i + 1}: {x.text.replace(/\n/g, ' / ')} (ilvl {x.ilvl})</option>)}
+                      </select>
+                    )}
+                  </li>
+                )
+              })}
+          </ul>
+        </section>
+      )}
       <div className="row end">
         <div className="field">
           <label htmlFor="c-value">{t('craft.value')}</label>
@@ -177,7 +255,9 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
             }} />
         </div>
         <button className="btn" disabled={valueBusy} onClick={estimate}>{valueBusy ? t('craft.valueBusy') : t('craft.estimate')}</button>
-        <button className="btn primary" disabled={busy || !selected.some(Boolean)} onClick={() => build()}>{t('craft.build')}</button>
+        <button className="btn primary"
+          disabled={busy || (finish ? !!addable?.blocked || (!picks.length && !(addable?.existing ?? []).some((e) => !selected[e.idx])) || slots.prefix > maxSide || slots.suffix > maxSide : !selected.some(Boolean))}
+          onClick={() => build()}>{t('craft.build')}</button>
       </div>
       {valueNote && <p className="muted small">{valueNote}</p>}
       {(busy || data?.loading) && <p className="note">{data?.loading ? t('craft.loadingData') : t('craft.building')}</p>}
