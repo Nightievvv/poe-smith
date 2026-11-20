@@ -18,6 +18,8 @@ export const slotOfClass = (itemClass: string, baseType: string): SlotId | null 
 
 const FLAGS = /^(Corrupted|Mirrored|Unidentified|Split|Synthesised Item|Fractured Item|Shaper Item|Elder Item|Crusader Item|Hunter Item|Redeemer Item|Warlord Item|Searing Exarch Item|Eater of Worlds Item|Unmodifiable|Imbued)$/
 const PROP_SECTION = /^(Requirements|Requires|Sockets|Quality|Physical Damage|Elemental Damage|Chaos Damage|Critical Strike Chance|Attacks per Second|Weapon Range|Armour|Evasion Rating|Energy Shield|Ward|Chance to Block|Level|Str|Dex|Int|Stack Size|Limited to|Radius|Recovers|Consumes|Currently has|Lasts|Note|Item Level)\b/
+/** подсказки по использованию предмета — это не моды */
+const USAGE = /^(Right click|Place into|Can only hold charges|Travel to this|Shift click|Use this)/
 const TAG_RE = /\s*\((implicit|enchant|crafted|fractured|scourge|crucible)\)$/
 
 const num = (s: string) => Number(s.replace(/[^\d.]/g, ''))
@@ -126,7 +128,7 @@ export function parseItem(text: string): ParsedItem | null {
   let corrupted = false
   const flagLines = new Set(lines.filter((l) => FLAGS.test(l)))
   for (const s of sections.slice(ilvlIdx >= 0 ? ilvlIdx + 1 : 1)) {
-    if (!s.length || (PROP_SECTION.test(s[0]) && !s[0].startsWith('{'))) continue
+    if (!s.length || (PROP_SECTION.test(s[0]) && !s[0].startsWith('{')) || USAGE.test(s[0])) continue
     let header: ReturnType<typeof parseHeader> | null = null
     for (const raw of s) {
       if (FLAGS.test(raw)) {

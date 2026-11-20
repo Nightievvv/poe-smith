@@ -211,7 +211,7 @@ export function PriceCheckApp() {
                   </span>
                 </div>
                 {result.rows.length === 0 && <p className="note">{t('pc.nothing')}</p>}
-                <ol className="pc-list">
+                <ol className={'pc-list' + (state.item.gem ? ' gems' : '')}>
                   {result.rows.map((row, i) => {
                     const toggle = () => row.item && setOpen((o) => { const n = new Set(o); if (n.has(i)) n.delete(i); else n.add(i); return n })
                     const pp = divParts(row.priceDiv, divine)
@@ -227,8 +227,9 @@ export function PriceCheckApp() {
                         aria-expanded={row.item ? false : undefined} title={row.item ? t('pc.expand') : undefined} onClick={toggle}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() } }}>
                         <span className={'pc-name r-' + (row.rarity ?? 'rare').toLowerCase()}>{row.name}</span>
-                        <span className="muted mono">{row.quality ? `${row.quality}%` : ''}</span>
-                        <span className="muted">{row.ilvl || ''}</span>
+                        {state.item.gem && <span className="muted mono">{row.gemLevel ? `lvl ${row.gemLevel}` : ''}</span>}
+                        <span className="muted mono">{row.quality ? `Q ${row.quality}` : ''}</span>
+                        {!state.item.gem && <span className="muted mono">{row.ilvl || ''}</span>}
                         <span className="mono">{row.amount != null ? <CurrencyAmount amount={row.amount} id={row.currency!} /> : pp ? <CurrencyAmount amount={pp.amount} id={pp.id} /> : '—'}</span>
                       </li>
                     )

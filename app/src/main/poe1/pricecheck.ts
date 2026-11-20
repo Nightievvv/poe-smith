@@ -65,9 +65,10 @@ export async function defaultFilters(item: ParsedItem, league?: string): Promise
       { key: 'base', label: item.name, kind: 'base', value: null, min: null, max: null, enabled: true, matched: true },
       { key: 'gem_level', label: 'Gem Level', kind: 'gem', statId: 'gem_level', value: g.level, min: g.level, max: null, enabled: true, matched: true },
       { key: 'quality', label: 'Quality', kind: 'quality', statId: 'quality', value: g.quality, min: g.quality || null, max: null, enabled: g.quality > 0, matched: true },
-      { key: 'corrupted', label: item.corrupted ? 'Corrupted' : 'Not Corrupted', kind: 'flag', statId: 'corrupted', value: item.corrupted ? 1 : 0, min: null, max: null, enabled: true, matched: true },
-      { key: 'gem_transfigured', label: tf.transfigured ? 'Transfigured' : 'Not Transfigured', kind: 'flag', statId: 'gem_transfigured', value: tf.transfigured ? 1 : 0, min: null, max: null, enabled: true, matched: true },
-      { key: 'gem_imbued', label: g.imbued ? 'Imbued' : 'Not Imbued', kind: 'flag', statId: 'gem_imbued', value: g.imbued ? 1 : 0, min: null, max: null, enabled: true, matched: true }
+      // статусы камня: галочка — свойство есть, без галочки — свойства нет (ищем именно такие камни)
+      { key: 'corrupted', label: 'Corrupted', kind: 'flag', statId: 'corrupted', value: null, min: null, max: null, enabled: item.corrupted, matched: true },
+      { key: 'gem_transfigured', label: 'Transfigured', kind: 'flag', statId: 'gem_transfigured', value: null, min: null, max: null, enabled: tf.transfigured, matched: true },
+      { key: 'gem_imbued', label: 'Imbued', kind: 'flag', statId: 'gem_imbued', value: null, min: null, max: null, enabled: g.imbued, matched: true }
     ]
     return { item, filters: f }
   }
@@ -157,9 +158,11 @@ export async function pcSearch(league: string, item: ParsedItem, filters: PcFilt
     else if (x.kind === 'defence') armour[x.statId!] = val(x)
     else if (x.kind === 'ilvl') misc.ilvl = val(x)
     else if (x.kind === 'quality' || x.kind === 'gem') misc[x.statId!] = val(x)
-    else if (x.kind === 'flag') misc[x.statId!] = { option: x.value ? 'true' : 'false' }
-    else if (x.statId && x.kind !== 'base') stats.push({ id: x.statId, value: val(x) })
+
+    else if (x.statId && x.kind !== 'base' && x.kind !== 'flag') stats.push({ id: x.statId, value: val(x) })
   }
+  // статусы камня учитываются всегда: снятая галочка — «нет»
+  for (const x of filters) if (x.kind === 'flag') misc[x.statId!] = { option: x.enabled ? 'true' : 'false' }
   const fl: Record<string, unknown> = {
     type_filters: { filters: typeFilters },
     trade_filters: { filters: { sale_type: { option: 'priced' } } }
@@ -205,6 +208,7 @@ async function pcPage(league: string, item: ParsedItem, queryId: string, ids: st
         name: (l.item.name || l.item.typeLine).replace(/\[([^\]|]+)\|([^\]]+)\]/g, '$2'),
         ilvl: l.item.ilvl ?? null,
         quality: listingToItem(l, item.slot).props.quality,
+        gemLevel: item.gem ? Number(String(((l.item as { properties?: { name: string; values: [string, number][] }[] }).properties ?? []).find((x) => x.name === 'Level')?.values?.[0]?.[0] ?? '').replace(/[^\d]/g, '')) || undefined : undefined,
         rarity: l.item.rarity ?? (item.gem ? 'Gem' : 'Rare'),
         amount: p.amount,
         currency: p.currency,

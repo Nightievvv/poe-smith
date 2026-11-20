@@ -1,5 +1,5 @@
 import type { ParsedItem } from '../../shared/types'
-import { craftDataIfLoaded, matchMod, weightFor, type Base, type CraftData, type Mod } from './craftdata'
+import { craftDataIfLoaded, loadCraftData, matchMod, weightFor, type Base, type CraftData, type Mod } from './craftdata'
 
 /** Мод подходит базе по домену (обычные предметы, самоцветы, абиссальные самоцветы). */
 export function domainOk(mod: Mod, base: Base) {
@@ -41,4 +41,17 @@ export function fillCraftedGen<T extends ParsedItem>(item: T): T {
       return hit ? { ...m, gen: hit.gen as 'prefix' | 'suffix' } : m
     })
   }
+}
+
+/**
+ * У магических предметов в тексте одна строка: префикс + база + суффикс. Базу ищем по данным игры —
+ * самое длинное название базы, которое входит в строку. У остальных предметов база уже отдельной строкой.
+ */
+export async function withBaseType(item: ParsedItem): Promise<ParsedItem> {
+  if (item.gem) return item
+  const d = await loadCraftData().catch(() => null)
+  if (!d || d.bases.has(item.baseType)) return item
+  let best = ''
+  for (const name of d.bases.keys()) if (name.length > best.length && item.baseType.includes(name)) best = name
+  return best ? { ...item, baseType: best } : item
 }

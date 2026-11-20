@@ -27,6 +27,7 @@ import { exchangeData, exchangeIcons } from './poe1/exchange'
 import { mapMods } from './poe1/mapmods'
 import { itemBases, itemMods } from './poe1/itemmods'
 import { addableFor } from './poe1/addable'
+import { withBaseType } from './poe1/modinfo'
 import { closeStash, debugStash, stashVisible, stashWindow, toggleStash } from './stash'
 import { checkForUpdates, downloadUpdate, initUpdater, installUpdate, updateState } from './updater'
 
@@ -179,7 +180,8 @@ async function readItem(mode: 'read' | 'price') {
   // если в фокусе сам оверлей, Ctrl+C ушёл бы ему, а не игре
   const focused = win?.isFocused() || pcWin?.isFocused()
   const text = focused ? null : await copyItemText()
-  const item = text ? parseItem(text) : null
+  const parsed = text ? parseItem(text) : null
+  const item = parsed ? await withBaseType(parsed) : null
   if (mode === 'read' || !item) {
     userVisible = true
     if (win && !win.isVisible()) win.showInactive() // не забираем фокус у игры
@@ -344,8 +346,9 @@ ipcMain.on('pc:close', () => {
 // отладка без игры: прайс-чек и крафт по тексту предмета (только с переменной окружения POESMITH_DEBUG)
 if (process.env.POESMITH_DEBUG || process.env.EXILE_FORGE_DEBUG) {
   ipcMain.handle('debug:item', async (_e, text: string, mode: 'read' | 'price') => {
-    const item = parseItem(text)
-    if (!item) return false
+    const parsed = parseItem(text)
+    if (!parsed) return false
+    const item = await withBaseType(parsed)
     if (mode === 'read') send({ type: 'item', item, mode })
     else {
       pcState = await defaultFilters(item, await currentLeague().catch(() => undefined))

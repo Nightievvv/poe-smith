@@ -228,6 +228,8 @@ export interface PcRow {
   name: string
   ilvl: number | null
   quality?: number
+  /** уровень камня */
+  gemLevel?: number
   /** редкость лота (Unique/Rare/Magic/Normal/Gem) — цвет названия */
   rarity?: string
   /** цена лота как выставлена: число и id валюты трейда */

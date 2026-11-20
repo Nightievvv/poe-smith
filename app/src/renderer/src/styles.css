@@ -179,7 +179,7 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; width: 100
 .pc-results { display: grid; gap: 6px; }
 .pc-results a { color: var(--brass); text-decoration: none; font-size: 12px; white-space: nowrap; }
 .pc-list { margin: 0; padding: 0; list-style: none; display: grid; font-size: 12.5px; }
-.pc-list > li { display: grid; grid-template-columns: 1fr 34px 26px auto; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--line); }
+.pc-list > li { display: grid; grid-template-columns: minmax(0, 1fr) 40px 28px 78px; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--line); }
 .pc-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6d36a; }
 .pc-name.r-unique { color: #c67a3c; } .pc-name.r-magic { color: #8888ff; } .pc-name.r-normal { color: #c8c8c8; } .pc-name.r-gem { color: #1ba29b; }
 
@@ -358,3 +358,6 @@ html.stash-root, html.stash-root body, html.stash-root #root { background: trans
 .t-suf-c { color: #7fb0e6; }
 .rx-mods li.off label { opacity: .45; cursor: default; }
 .add-why { margin-left: 22px; font-size: 11px; }
+
+.pc-list.gems > li { grid-template-columns: minmax(0, 1fr) 46px 40px 78px; }
+.pc-list > li > .mono:last-child { justify-self: end; }
