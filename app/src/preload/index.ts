@@ -32,6 +32,12 @@ const api: Api = {
   resetHarvestFile: () => ipcRenderer.invoke('harvest:reset'),
   openInCraft: (item) => ipcRenderer.send('craft:open', item),
   hide: () => ipcRenderer.send('overlay:hide'),
+  exchange: (force) => ipcRenderer.invoke('exchange:get', force),
+  exchangeIcons: (ids) => ipcRenderer.invoke('exchange:icons', ids),
+  stashClose: () => ipcRenderer.send('stash:close'),
+  mapMods: () => ipcRenderer.invoke('maps:mods'),
+  itemBases: () => ipcRenderer.invoke('items:bases'),
+  itemMods: (base) => ipcRenderer.invoke('items:mods', base),
   updateState: () => ipcRenderer.invoke('update:get'),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
@@ -45,4 +51,4 @@ const api: Api = {
 
 contextBridge.exposeInMainWorld('api', api)
 if (process.env.POESMITH_DEBUG || process.env.EXILE_FORGE_DEBUG)
-  contextBridge.exposeInMainWorld('debug', { item: (text: string, mode: 'read' | 'price') => ipcRenderer.invoke('debug:item', text, mode) })
+  contextBridge.exposeInMainWorld('debug', { item: (text: string, mode: 'read' | 'price') => ipcRenderer.invoke('debug:item', text, mode), stash: (path: string) => ipcRenderer.invoke('debug:stash', path), stashLive: () => ipcRenderer.invoke('debug:stashLive') })

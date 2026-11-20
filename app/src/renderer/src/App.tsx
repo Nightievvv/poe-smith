@@ -7,9 +7,11 @@ import { SettingsTab } from './SettingsTab'
 import { MarketTab } from './MarketTab'
 import { CraftTab } from './CraftTab'
 import { JournalTab } from './JournalTab'
+import { CurrencyTab } from './CurrencyTab'
+import { RegexTab } from './RegexTab'
 
-type Tab = 'craft' | 'market' | 'journal' | 'settings'
-const TABS: Tab[] = ['craft', 'market', 'journal', 'settings']
+type Tab = 'craft' | 'market' | 'currency' | 'regex' | 'journal' | 'settings'
+const TABS: Tab[] = ['craft', 'market', 'currency', 'regex', 'journal', 'settings']
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -152,6 +154,8 @@ export function App() {
             onReload={() => window.api.getMarket(query).then((m) => { if (sameQuery(m)) setMarket(m) })}
             favorites={settings.favorites} setFavorites={(favorites) => save({ favorites })} />
         )}
+        {tab === 'currency' && <CurrencyTab t={t} />}
+        {tab === 'regex' && <RegexTab t={t} />}
         {tab === 'journal' && <JournalTab t={t} divine={divine} />}
         {tab === 'settings' && (
           <SettingsTab

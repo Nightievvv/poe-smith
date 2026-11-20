@@ -3,9 +3,15 @@ import type { CraftDataStatus, CraftPlan, CraftVariant, Lang, ParsedItem, StepLi
 import type { T } from './i18n'
 import { ItemCard, genClass } from './ItemCard'
 import { errText } from './format'
+import { useItemIcons } from './itemIcons'
 
 const fmtCost = (chaos: number | undefined, divine: number | null) =>
   chaos == null ? '' : divine && chaos >= divine ? `${(chaos / divine).toFixed(1)} div` : `${Math.max(1, Math.round(chaos))}c`
+
+const range = (lo: number, hi: number, divine: number | null) => {
+  const a = fmtCost(lo, divine), b = fmtCost(hi, divine)
+  return a === b ? a : `${a}–${b}`
+}
 
 /** вариант в выбранном режиме доводки */
 function view(v: CraftVariant | undefined, mode: 'joint' | 'single'): CraftVariant | undefined {
@@ -14,7 +20,7 @@ function view(v: CraftVariant | undefined, mode: 'joint' | 'single'): CraftVaria
 }
 /** варианты по возрастанию стоимости в выбранном режиме; i — индекс в plan.variants */
 function order(p: CraftPlan, mode: 'joint' | 'single') {
-  return p.variants.map((v, i) => ({ v: view(v, mode)!, i })).sort((a, b) => a.v.costMax - b.v.costMax)
+  return p.variants.map((v, i) => ({ v: view(v, mode)!, i })).sort((a, b) => a.v.costMissMax - b.v.costMissMax)
 }
 
 function Lines({ lines }: { lines: StepLine[] }) {
@@ -47,6 +53,7 @@ interface Props {
 }
 
 export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSignal, customPrices, saveCustomPrices }: Props) {
+  const icons = useItemIcons()
   const [priceDraft, setPriceDraft] = useState<Record<string, string>>({})
   const [journalMsg, setJournalMsg] = useState<string | null>(null)
   const [selected, setSelected] = useState<boolean[]>([])
@@ -106,7 +113,7 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
   const valueChaos = valueDiv && divine ? valueDiv * divine : null
   const profit = (v: CraftPlan['variants'][number]) => {
     if (!valueChaos) return null
-    const lo = valueChaos - v.costMax
+    const lo = valueChaos - v.costMissMax
     const hi = valueChaos - v.costMin
     const mid = (lo + hi) / 2
     return { lo, hi, pLo: lo / valueChaos, pHi: hi / valueChaos, pMid: mid / valueChaos }
@@ -245,7 +252,12 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
                   onClick={() => { setVi(i); setDone(v.steps.map(() => false)) }}>
                   <span className="vname">{v.name}{k === 0 && <span className="best">{t('craft.recommended')}</span>}</span>
                   <span className="vchips">{v.mechanics.map((m) => <span key={m} className="mech">{m}</span>)}</span>
-                  <span className="mono vcost">{v.costMax ? `${fmtCost(v.costMin, plan.divine)}–${fmtCost(v.costMax, plan.divine)}` : '—'}</span>
+                  <span className="vcost">
+                    <span className="mono">{v.costMax ? range(v.costMin, v.costMax, plan.divine) : '—'}</span>
+                    {v.costMissMax > v.costMax * 1.01 && (
+                      <span className="mono vmiss">{t('craft.withMisses')}: {range(v.costMissMin, v.costMissMax, plan.divine)}</span>
+                    )}
+                  </span>
                   {(() => {
                     const pr = profit(v)
                     if (!pr) return null
@@ -284,12 +296,18 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
                 <input type="checkbox" checked={!!done[i]} aria-label={s.title}
                   onChange={() => setDone((d) => d.map((v, j) => (j === i ? !v : v)))} />
                 <div>
-                  {(s.optional || s.method) && (
-                    <div className="shead">
-                      {s.optional && <span className="opt">{t('craft.optional')}</span>}
-                      {s.method && <span className="mech">{s.method}</span>}
-                    </div>
-                  )}
+                  <div className="shead">
+                    {s.optional && <span className="opt">{t('craft.optional')}</span>}
+                    {s.method && <span className="mech">{s.method}</span>}
+                    {s.cost && s.cost[1] > 0 && (
+                      <span className="scost">
+                        <span className="mono">≈ {range(s.cost[0], s.cost[1], plan.divine)}</span>
+                        {s.costMiss && s.costMiss[1] > s.cost[1] * 1.01 && (
+                          <span className="mono smiss">{t('craft.withMisses')}: {range(s.costMiss[0], s.costMiss[1], plan.divine)}</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                   <h4>{i + 1}. {s.title}</h4>
                   {s.lines && s.lines.length > 0 && <Lines lines={s.lines} />}
                   <dl className="meta">
@@ -297,9 +315,17 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
                       <>
                         <dt>{t('craft.currency')}</dt>
                         <dd className="cur">
-                          {s.currency.map((c, j) => (
-                            <span key={j}>{c.name} {c.count}{c.chaos != null ? ` (≈ ${fmtCost(c.chaos, plan.divine)})` : ''}{j < s.currency.length - 1 ? ', ' : ''}</span>
-                          ))}
+                          <ul className="cur-list">
+                            {s.currency.map((c, j) => (
+                              <li key={j} className={c.miss ? 'miss' : undefined}>
+                                {icons[c.name] ? <img src={icons[c.name]} alt="" /> : <span className="cur-noimg" />}
+                                <span className="cname">{c.name}</span>
+                                <span className="mono ccount">{c.count}</span>
+                                {c.chaos != null && <span className="mono muted">≈ {fmtCost(c.chaos, plan.divine)}</span>}
+                                {c.miss && <span className="muted small">{t('craft.onMiss')}</span>}
+                              </li>
+                            ))}
+                          </ul>
                         </dd>
                       </>
                     )}

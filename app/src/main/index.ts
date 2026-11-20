@@ -18,11 +18,15 @@ import { currencyIcons } from './poe1/icons'
 import { getCached, scan } from './poe1/market'
 import { getRates } from './poe1/ninja'
 import { limits } from './poe1/trade'
-import { hwndOf, isGameTitle, visibleTitleAt } from './poe1/focus'
+import { gameClientRect, hwndOf, isGameTitle, visibleTitleAt } from './poe1/focus'
 import { addFromPriceCheck, removeCustom } from './poe1/customprofiles'
 import { addJournal, listJournal, removeJournal, updateJournal } from './journal'
 import { checkNow, startWatcher, type WatcherDeps } from './watcher'
 import { appIcon, createTray } from './tray'
+import { exchangeData, exchangeIcons } from './poe1/exchange'
+import { mapMods } from './poe1/mapmods'
+import { itemBases, itemMods } from './poe1/itemmods'
+import { closeStash, debugStash, stashVisible, stashWindow, toggleStash } from './stash'
 import { checkForUpdates, downloadUpdate, initUpdater, installUpdate, updateState } from './updater'
 
 let win: BrowserWindow | null = null
@@ -94,6 +98,18 @@ function watchFocus() {
         game = t != null && isGameTitle(t)
       } catch {
         game = true
+      }
+    }
+    // оверлей склада: проверяем, что видно в центре окна игры (игра может быть на другом мониторе, чем основное окно)
+    if (stashVisible()) {
+      try {
+        const r = gameClientRect()
+        const sw = stashWindow()
+        const mine = [win, pcWin, sw].filter((w): w is BrowserWindow => !!w && !w.isDestroyed()).map((w) => hwndOf(w.getNativeWindowHandle()))
+        const t = r ? visibleTitleAt(Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2), mine) : null
+        if (!t || !isGameTitle(t)) closeStash()
+      } catch {
+        /* не удалось проверить — оставляем как есть */
       }
     }
     for (const [w, wanted] of [[win, userVisible], [pcWin, pcVisible]] as const) {
@@ -178,6 +194,7 @@ const actions: Record<HotkeyId, () => void> = {
   toggle: toggleOverlay,
   read: () => void readItem('read'),
   price: () => void readItem('price'),
+  stash: () => void toggleStash({ load: rendererUrl, league: currentLeague, icon: appIcon() }),
   click: () => {
     settings = { ...settings, clickThrough: !settings.clickThrough }
     writeSettings(settings)
@@ -283,6 +300,15 @@ ipcMain.handle('market:scan', async (_e, q: MarketQuery, more: boolean) => {
     sendLimits()
   }
 })
+ipcMain.handle('exchange:get', async (_e, force?: boolean) => exchangeData(await currentLeague(), !!force))
+ipcMain.handle('exchange:icons', async (_e, ids?: string[]) => exchangeIcons(await currentLeague(), ids))
+ipcMain.handle('maps:mods', () => mapMods())
+ipcMain.handle('items:bases', () => itemBases())
+ipcMain.handle('items:mods', (_e, base: string) => itemMods(base))
+ipcMain.on('stash:close', () => closeStash())
+if (process.env.POESMITH_DEBUG) ipcMain.handle('debug:stashLive', () => toggleStash({ load: rendererUrl, league: currentLeague, icon: appIcon() }))
+if (process.env.POESMITH_DEBUG) ipcMain.handle('debug:stash', (_e, path: string) => debugStash({ load: rendererUrl, league: currentLeague, icon: appIcon() }, path))
+
 ipcMain.handle('rates:divine', async () => {
   try {
     return (await getRates(await currentLeague())).divine

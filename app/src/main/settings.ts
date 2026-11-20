@@ -16,6 +16,7 @@ export function defaultSettings(): Settings {
       toggle: 'Ctrl+Shift+F',
       read: 'Ctrl+Alt+D',
       price: 'Ctrl+D',
+      stash: 'Ctrl+Shift+D',
       click: 'Ctrl+Shift+T',
       step: 'Ctrl+Shift+N',
       tab: 'Ctrl+Tab'

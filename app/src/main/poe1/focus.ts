@@ -11,6 +11,10 @@ const IsWindowVisible = user32.func('bool __stdcall IsWindowVisible(void* hWnd)'
 const IsIconic = user32.func('bool __stdcall IsIconic(void* hWnd)')
 const GetWindowRect = user32.func('bool __stdcall GetWindowRect(void* hWnd, _Out_ RECT* lpRect)')
 const DwmGetWindowAttribute = dwmapi.func('long __stdcall DwmGetWindowAttribute(void* hWnd, uint32 dwAttribute, _Out_ uint32* pvAttribute, uint32 cbAttribute)')
+const FindWindowW = user32.func('void* __stdcall FindWindowW(const char16_t* cls, const char16_t* name)')
+const GetClientRect = user32.func('bool __stdcall GetClientRect(void* hWnd, _Out_ RECT* lpRect)')
+const POINT = koffi.struct('POINT', { x: 'long', y: 'long' })
+const ClientToScreen = user32.func('bool __stdcall ClientToScreen(void* hWnd, _Inout_ POINT* p)')
 const GW_HWNDNEXT = 2
 const DWMWA_CLOAKED = 14
 
@@ -52,3 +56,19 @@ export function visibleTitleAt(x: number, y: number, exclude: bigint[]): string 
 
 /** Окно игры PoE 1 называется «Path of Exile» (у PoE 2 — «Path of Exile 2»). */
 export const isGameTitle = (title: string) => /^Path of Exile( 2)?$/.test(title.trim())
+
+/** Клиентская область окна игры на экране (физические пиксели); null — окно не найдено или свёрнуто. */
+export function gameClientRect(): { x: number; y: number; width: number; height: number } | null {
+  for (const name of ['Path of Exile', 'Path of Exile 2']) {
+    const h = FindWindowW(null, name)
+    if (!h || IsIconic(h)) continue
+    const r = { left: 0, top: 0, right: 0, bottom: 0 }
+    if (!GetClientRect(h, r)) continue
+    const p = { x: 0, y: 0 }
+    if (!ClientToScreen(h, p)) continue
+    const width = r.right - r.left, height = r.bottom - r.top
+    if (width < 100 || height < 100) continue
+    return { x: p.x, y: p.y, width, height }
+  }
+  return null
+}

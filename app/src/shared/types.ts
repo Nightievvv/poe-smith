@@ -1,19 +1,20 @@
 export type Lang = 'ru' | 'en'
 export type Game = 'poe1' | 'poe2'
 
-export type HotkeyId = 'toggle' | 'read' | 'price' | 'click' | 'step' | 'tab'
+export type HotkeyId = 'toggle' | 'read' | 'price' | 'stash' | 'click' | 'step' | 'tab'
 
 /** global — работает поверх игры; local — только когда окно оверлея в фокусе */
 export const HOTKEY_SCOPE: Record<HotkeyId, 'global' | 'local'> = {
   toggle: 'global',
   read: 'global',
   price: 'global',
+  stash: 'global',
   click: 'global',
   step: 'local',
   tab: 'local'
 }
 
-export const HOTKEY_ORDER: HotkeyId[] = ['toggle', 'read', 'price', 'click', 'step', 'tab']
+export const HOTKEY_ORDER: HotkeyId[] = ['toggle', 'read', 'price', 'stash', 'click', 'step', 'tab']
 
 export type OutlierMode = 'iqr1.5' | 'iqr3' | 'p10-90'
 export type ScanInterval = '30m' | '1h' | 'manual'
@@ -258,6 +259,8 @@ export interface CraftCost {
   chaos?: number
   /** расход зависит от удачи (попытки) — для него считается диапазон 50–100% */
   attempts?: boolean
+  /** расход только на промахи (Annulment, повторные крафты) — входит в цену «с промахами» */
+  miss?: boolean
 }
 
 /** Строка описания шага: обычное предложение или мод (префикс/суффикс), который выводится с отступом и цветом стороны. */
@@ -275,6 +278,11 @@ export interface CraftStep {
   currency: CraftCost[]
   station?: string
   farm?: string
+  /** стоимость шага без промахов и с промахами, Chaos [мин, макс] */
+  cost?: [number, number]
+  costMiss?: [number, number]
+  /** служебное: риск снять нужные моды, Chaos (входит в costMiss) */
+  lossChaos?: number
 }
 
 export interface CraftTarget {
@@ -299,10 +307,13 @@ export interface CraftVariant {
   /** диапазон стоимости: попытки считаются от 50% до 100% расчётного количества */
   costMin: number
   costMax: number
+  /** то же с учётом промахов (Annulment, повторная доводка снятых модов) */
+  costMissMin: number
+  costMissMax: number
   /** заметки к варианту (риски, допущения) */
   notes: string[]
   /** тот же вариант, но доводка подобрана для каждого мода по отдельности (основные поля — для всех модов сразу) */
-  single?: { steps: CraftStep[]; totalChaos: number | null; costMin: number; costMax: number; mechanics: string[] }
+  single?: { steps: CraftStep[]; totalChaos: number | null; costMin: number; costMax: number; costMissMin: number; costMissMax: number; mechanics: string[] }
 }
 
 export interface CraftPlanOptions {
@@ -378,7 +389,8 @@ export type OverlayEvent =
   | { type: 'limits'; data: Limits }
   | { type: 'craftData'; data: CraftDataStatus }
   | { type: 'openCraft'; item: ParsedItem }
-  | { type: 'openTab'; tab: 'craft' | 'market' | 'journal' | 'settings' }
+  | { type: 'openTab'; tab: 'craft' | 'market' | 'currency' | 'regex' | 'journal' | 'settings' }
+  | { type: 'stash'; data: StashShot | null }
   | { type: 'update'; data: UpdateState }
 
 export interface Api {
@@ -425,10 +437,102 @@ export interface Api {
   /** иконки валюты по id трейда (chaos, divine…); недоступные пропускаются */
   currencyIcons(ids: string[]): Promise<Record<string, CurrencyIcon>>
   hide(): void
+  /** биржа poe.ninja для текущей лиги (force — мимо 15-минутного кэша) */
+  exchange(force?: boolean): Promise<ExchangeData>
+  /** иконки предметов биржи (data URL) по id; без ids — все */
+  exchangeIcons(ids?: string[]): Promise<Record<string, string>>
+  /** оверлей склада: закрыть */
+  stashClose(): void
+  /** моды карт для генератора regex */
+  mapMods(): Promise<MapModData>
+  /** базы предметов и моды выбранной базы для генератора regex предметов */
+  itemBases(): Promise<{ name: string; itemClass: string }[]>
+  itemMods(base: string): Promise<ItemModData | null>
   /** обновления: проверка только сообщает о версии, скачивание и установка — по кнопке */
   updateState(): Promise<UpdateState>
   checkUpdate(): Promise<UpdateState>
   downloadUpdate(): Promise<void>
   installUpdate(): void
   onEvent(cb: (e: OverlayEvent) => void): () => void
+}
+
+/** Предмет биржи poe.ninja. */
+export interface ExchangeItem {
+  id: string
+  name: string
+  /** тип запроса poe.ninja: Currency, Fragment, Essence… */
+  type: string
+  /** подкатегория из ответа (Catalysts, Keepers…) */
+  category: string
+  chaos: number
+  /** объём торгов за час, в Chaos */
+  volume: number
+  /** изменение цены за 7 дней, % */
+  change: number | null
+  /** точки тренда за 7 дней (% к началу) */
+  spark: (number | null)[]
+  /** путь картинки на web.poecdn.com */
+  image: string
+}
+
+export interface ExchangeData {
+  league: string
+  /** Chaos за 1 Divine */
+  divine: number
+  items: ExchangeItem[]
+  at: number
+}
+
+/** Снимок области склада для оверлея цен: пиксели RGBA и где они лежат на экране. */
+export interface StashShot {
+  /** RGBA */
+  data: Uint8Array
+  width: number
+  height: number
+  /** полная высота экрана в пикселях снимка: по ней масштабируется весь интерфейс PoE */
+  screenH: number
+  /** смещение снимка от левого верхнего угла экрана, в пикселях снимка */
+  offX: number
+  offY: number
+  /** во сколько раз пиксели снимка больше CSS-пикселей окна оверлея */
+  scale: number
+  league: string
+  /** только для отладки: исходная картинка фоном */
+  debugBg?: string
+}
+
+/** Мод карты для генератора regex (тиры склеены). */
+export interface MapModInfo {
+  id: string
+  /** текст для показа, с общим диапазоном чисел по тирам (строки разделены переводом строки) */
+  text: string
+  gen: 'prefix' | 'suffix'
+  /** мод карт T17 (uber) */
+  t17: boolean
+  /** строки в нижнем регистре, числа заменены на # — по ним ищется уникальный фрагмент */
+  match: string[]
+}
+
+export interface MapModData {
+  mods: MapModInfo[]
+  /** прочий текст, который бывает на картах (свойства, имплиситы) — фрагменты не должны с ним совпадать */
+  corpus: string[]
+}
+
+/** Группа модов предмета (один тип мода, все тиры) для генератора regex предметов. */
+export interface ItemModGroup {
+  id: string
+  gen: 'prefix' | 'suffix'
+  /** текст лучшего тира */
+  text: string
+  /** строки шаблона в нижнем регистре, числа — # */
+  match: string[]
+  /** тиры от лучшего: текст, нужный ilvl, минимальное значение первого числа */
+  tiers: { text: string; ilvl: number; min: number | null }[]
+}
+
+export interface ItemModData {
+  base: string
+  itemClass: string
+  groups: ItemModGroup[]
 }

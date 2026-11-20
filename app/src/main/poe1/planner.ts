@@ -323,8 +323,46 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   const rareCounts = isJewel ? JEWEL_COUNTS : RARE_COUNTS
   const toSim = (x: Mod, w: number): SimMod => ({ type: x.type, gen: x.gen as Side, reqLevel: x.reqLevel, groups: x.groups, w })
   const simPool = (fs: Fossil[] = []) => rollable.map((x) => toSim(x, weightFor(x, tags) * mult(x, fs))).filter((m) => m.w > 0)
-  const simTargets: SimTarget[] = explicit.map((r) => ({ type: r.mod!.type, gen: r.mod!.gen as Side, reqLevel: r.mod!.reqLevel }))
+  // резисты Fire/Cold/Lightning: в симуляции отслеживаем и другие два цвета того же тира (их меняют через Harvest)
+  const RES_RE = /^\+\d+% to (Fire|Cold|Lightning) Resistance$/
+  const resEl = (r: Resolved) => r.text.match(RES_RE)?.[1] as 'Fire' | 'Cold' | 'Lightning' | undefined
+  const altTargets: SimTarget[] = []
+  const altBit = new Map<Resolved, number>()
+  explicit.forEach((r, i) => {
+    let m = 1 << i
+    const el = resEl(r)
+    if (el)
+      for (const e of ['Fire', 'Cold', 'Lightning'].filter((x) => x !== el)) {
+        const re = new RegExp(String.raw`^\+\(?\d+(-\d+)?\)?% to ` + e + ' Resistance$')
+        const t = rollable.find((x) => x.gen === r.mod!.gen && re.test(x.text))
+        if (!t || explicit.length + altTargets.length >= 30) continue
+        m |= 1 << (explicit.length + altTargets.length)
+        altTargets.push({ type: t.type, gen: t.gen as Side, reqLevel: r.mod!.reqLevel })
+      }
+    altBit.set(r, m)
+  })
+  const simTargets: SimTarget[] = [...explicit.map((r) => ({ type: r.mod!.type, gen: r.mod!.gen as Side, reqLevel: r.mod!.reqLevel })), ...altTargets]
   const bit = (r: Resolved) => (explicit.includes(r) ? 1 << explicit.indexOf(r) : 0)
+  /** доля роллов, где есть все моды need (резист — любого цвета того же тира) */
+  const pSet = (masks: Uint32Array, need: Resolved[]) => {
+    if (!need.length) return 1
+    const ms = need.map((r) => altBit.get(r) ?? bit(r))
+    let hit = 0
+    for (let i = 0; i < masks.length; i++) if (ms.every((m) => (masks[i] & m) !== 0)) hit++
+    return hit / masks.length
+  }
+  /** P(мод r есть, и именно нужного цвета | набор S выпал) */
+  const pGivenExact = (masks: Uint32Array, r: Resolved, S: Resolved[]) => {
+    const ms = S.map((x) => altBit.get(x) ?? bit(x))
+    let base = 0, both = 0
+    for (let i = 0; i < masks.length; i++) {
+      if (!ms.every((m) => (masks[i] & m) !== 0)) continue
+      base++
+      if (masks[i] & bit(r)) both++
+    }
+    return base ? both / base : 0
+  }
+  const pGiven = pGivenExact
   const bits = (rs: Resolved[]) => rs.reduce((a, r) => a | bit(r), 0)
   const sim = (o: { fs?: Fossil[]; forced?: Mod[]; forcedFrom?: Mod[]; magic?: boolean }) =>
     simulate(simPool(o.fs), simTargets, {
@@ -364,20 +402,6 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
           T('Если выпали — пропустите их шаги доводки.', 'If they do, skip their finishing steps.')]
         : []
 
-    // Currency: Chaos Orb
-    {
-      const masks = sim({})
-      const p = Math.max(1e-6, prob(masks, bit(hardest)))
-      const cs = [cost('Orb of Alchemy', 1), costA('Chaos Orb', 1 / p)]
-      primaries.push({
-        key: 'chaos', name: 'Chaos Orb', mechanics: ['Currency'], main: hardest, chaos: sum(cs), notes: [],
-        already: (r) => (r === hardest ? 1 : cond(masks, r, bit(hardest))),
-        steps: [{ kind: 'explicit', method: 'Currency', title: T(`Chaos Orb до «${label(hardest)}»`, `Chaos Orb until "${label(hardest)}"`),
-          lines: [T(`Шанс за попытку ≈ ${pct(p)}.`, `≈ ${pct(p)} per try.`), T('Начните с редкой базы (Orb of Alchemy).', 'Start from a rare base (Orb of Alchemy).'), ...extrasNote(hardest)],
-          currency: cs, station: INV, farm: farm('Chaos Orb') }]
-      })
-    }
-
     // Currency: Alteration (магический предмет) + Regal
     {
       const pa = Math.max(1e-6, prob(sim({ magic: true }), bit(hardest)))
@@ -402,90 +426,160 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       })
     }
 
-    // Essence: основной мод гарантирован, ждём ещё один-два из нужных
+    // ---------- основные методы с выбором точки остановки ----------
+    // Метод можно катать до разного набора модов: только самый трудный, два, три… Чем больше модов ждём,
+    // тем дороже основной метод, но дешевле доводка. Перебираем наборы и оставляем самый дешёвый итог.
+    // Резисты Fire/Cold/Lightning засчитываются любого цвета того же тира — цвет меняем через Harvest.
+    const subsets = (xs: Resolved[], max: number): Resolved[][] => {
+      const out: Resolved[][] = [[]]
+      for (const x of xs) for (const s of [...out]) if (s.length < max) out.push([...s, x])
+      return out
+    }
+    const swapCost = (el: 'Fire' | 'Cold' | 'Lightning'): HarvestCost => {
+      const src = (['Fire', 'Cold', 'Lightning'] as const).filter((e) => e !== el)[0]
+      return { parts: [{ lf: RES_LIFEFORCE[src], n: H.resChange }, { lf: RES_LIFEFORCE[el], n: H.resChange }] }
+    }
+    type StopBase = {
+      key: string; name: string; mechanics: string[]; method: string; station: string; farmName: string
+      masks: Uint32Array; perTry: (tries: number) => CraftCost[]; title: (S: Resolved[]) => string; lead: StepLine[]
+      guaranteed?: Resolved
+    }
+    const stopPrimaries = (b: StopBase): Primary[] => {
+      const out: Primary[] = []
+      const free = explicit.filter((x) => x !== b.guaranteed)
+      /**
+       * Точка остановки: все моды req (резист — любого цвета) и, если задано, хотя бы один из anyOf.
+       * Вариант «хотя бы один из» оставляет второй мод на доводку — он выгоден, когда этот мод дёшево довести иначе.
+       */
+      const emit = (req: Resolved[], anyOf: Resolved[]) => {
+        const S = b.guaranteed ? [b.guaranteed, ...req] : req
+        if (!S.length) return
+        const reqMasks = req.map((x) => altBit.get(x) ?? bit(x))
+        const anyMask = anyOf.reduce((a, x) => a | bit(x), 0)
+        const ok = (m: number) => reqMasks.every((q) => (m & q) !== 0) && (!anyMask || (m & anyMask) !== 0)
+        let hits = 0
+        for (let i = 0; i < b.masks.length; i++) if (ok(b.masks[i])) hits++
+        const P = hits / b.masks.length
+        if (P < 2e-5) return
+        /** P(мод r есть точного цвета | точка остановки достигнута) */
+        const given = (r: Resolved) => {
+          let both = 0
+          for (let i = 0; i < b.masks.length; i++) if (ok(b.masks[i]) && b.masks[i] & bit(r)) both++
+          return hits ? both / hits : 0
+        }
+        const cs = b.perTry(1 / P)
+        const head = S[0] ?? anyOf[0]
+        const steps: CraftStep[] = [{ kind: 'explicit', method: b.method, title: b.title(S.length ? S : [head]),
+          lines: [...b.lead,
+            ...(req.length ? [T(anyOf.length ? 'Ждём моды:' : 'Ждём все моды сразу:', anyOf.length ? 'Wait for:' : 'Wait for all of:'), ...modLines(req)] : []),
+            ...(anyOf.length ? [T('и хотя бы один из:', 'and at least one of:'), ...modLines(anyOf)] : []),
+            T(`Шанс за попытку ≈ ${pct(P)}.`, `≈ ${pct(P)} per try.`),
+            ...(req.some((r) => resEl(r)) ? [T('Резист любого цвета того же тира подходит — цвет меняем шагом ниже.', 'A resistance of any colour at that tier counts: change the colour below.')] : []),
+            ...(free.length > req.length ? [T('Если заодно выпали другие нужные моды — пропустите их шаги доводки.', 'If other wanted mods roll too, skip their finishing steps.')] : [])],
+          currency: cs, station: b.station, farm: farm(b.farmName) }]
+        let chaos = sum(cs)
+        const mech = [...b.mechanics]
+        for (const r of req) {
+          const el = resEl(r)
+          if (!el) continue
+          const pSwap = 1 - given(r)
+          if (pSwap < 0.01) continue
+          const hc = harvestCosts(swapCost(el), pSwap)
+          chaos += sum(hc)
+          if (!mech.includes('Harvest')) mech.push('Harvest')
+          steps.push({ kind: 'explicit', method: 'Harvest', optional: true,
+            title: T(`Если резист не ${el}: Harvest — сменить сопротивление на ${el}`, `If the resistance is not ${el}: Harvest — change it to ${el}`),
+            lines: [T(`Понадобится с вероятностью ≈ ${pct(pSwap)}.`, `Needed with ≈ ${pct(pSwap)} probability.`),
+              T(`Horticrafting: ${H.resChange} лайфорса цвета исходного резиста + ${H.resChange} цвета ${el}.`, `Horticrafting: ${H.resChange} lifeforce of the source colour + ${H.resChange} of the ${el} colour.`)],
+            currency: hc, station: HORTI, farm: farm('Lifeforce') })
+        }
+        const setS = new Set(S)
+        out.push({ key: b.key, name: b.name, mechanics: mech, main: head, chaos, notes: [], steps,
+          already: (r) => (setS.has(r) ? 1 : given(r)) })
+      }
+      for (const req of subsets(free, 4)) emit(req, [])
+      // «все из req + хотя бы один из остальных»: остальные доводятся отдельными шагами
+      for (const req of subsets(free, 2)) {
+        const rest = free.filter((x) => !req.includes(x))
+        if (rest.length >= 2) emit(req, rest)
+      }
+      return out
+    }
+
+    // Currency: Chaos Orb
+    stopPrimaries({
+      key: 'chaos', name: 'Chaos Orb', mechanics: ['Currency'], method: 'Currency', station: INV, farmName: 'Chaos Orb', masks: sim({}),
+      perTry: (n) => [cost('Orb of Alchemy', 1), costA('Chaos Orb', n)],
+      title: (S) => T(`Chaos Orb до ${S.length > 1 ? `${S.length} нужных модов` : `«${label(S[0])}»`}`, `Chaos Orb until ${S.length > 1 ? `${S.length} wanted mods` : `"${label(S[0])}"`}`),
+      lead: [T('Начните с редкой базы (Orb of Alchemy).', 'Start from a rare base (Orb of Alchemy).')]
+    }).forEach((p) => primaries.push(p))
+
+    // Essence: мод эссенции гарантирован; ждём ещё набор нужных
     for (const main of explicit) {
       const ess = d.essences
         .filter((e) => { const em = d.mods.get(e.mods[base.itemClass]); return em && em.type === main.mod!.type && em.reqLevel >= main.mod!.reqLevel })
         .sort((a, b) => (prices.get(a.name) ?? 1e9) - (prices.get(b.name) ?? 1e9) || a.level - b.level)[0]
       if (!ess) continue
-      const rest = others(main)
-      const masks = sim({ forced: [d.mods.get(ess.mods[base.itemClass])!] })
-      const anyRest = bits(rest)
-      const pAdd = rest.length ? Math.max(1e-6, prob(masks, 0, anyRest)) : 1
-      const cs = [costA(ess.name, 1 / pAdd)]
-      primaries.push({
-        key: 'ess-' + ess.name, name: T(`Эссенция: ${ess.name}`, `Essence: ${ess.name}`), mechanics: ['Essence'], main, chaos: sum(cs), notes: [],
-        already: (r) => (r === main ? 1 : rest.length ? cond(masks, r, 0, anyRest) : 0),
-        steps: [{ kind: 'explicit', method: 'Essence',
-          title: rest.length
-            ? T(`Катать ${ess.name}: «${label(main)}» гарантирован, ждём ещё 1–2 нужных мода`, `Spam ${ess.name}: "${label(main)}" is guaranteed, wait for 1–2 more wanted mods`)
-            : T(`Применить ${ess.name}: гарантирует «${label(main)}»`, `Use ${ess.name}: guarantees "${label(main)}"`),
-          lines: rest.length
-            ? [T('Ждём хотя бы один из модов:', 'Wait for at least one of:'), ...modLines(rest),
-              T(`Стоимость посчитана до «основной + один дополнительный» (шанс за попытку ≈ ${pct(pAdd)}).`, `Cost counts until "main + one extra" (≈ ${pct(pAdd)} per try).`),
-              T('Остальные моды — шагами доводки ниже.', 'Remaining mods are finished below.')]
-            : undefined,
-          currency: cs, station: INV, farm: farm(ess.name) }]
-      })
+      stopPrimaries({
+        key: 'essence', name: T(`Эссенция: ${ess.name}`, `Essence: ${ess.name}`), mechanics: ['Essence'], method: 'Essence', station: INV, farmName: ess.name,
+        masks: sim({ forced: [d.mods.get(ess.mods[base.itemClass])!] }), guaranteed: main,
+        perTry: (n) => [costA(ess.name, n)],
+        title: (S) => S.length > 1
+          ? T(`Катать ${ess.name}: «${label(main)}» гарантирован, ждём ещё ${S.length - 1}`, `Spam ${ess.name}: "${label(main)}" is guaranteed, wait for ${S.length - 1} more`)
+          : T(`Применить ${ess.name}: гарантирует «${label(main)}»`, `Use ${ess.name}: guarantees "${label(main)}"`),
+        lead: []
+      }).forEach((p) => primaries.push(p))
     }
 
-    // Harvest: реролл с гарантированным модом тега; тег выбираем самый выгодный по таблице стоимостей
+    // Harvest: реролл с гарантированным модом тега (тег — самый выгодный для самого трудного мода)
     if (base.domain !== 'flask') {
-      const hopts = Object.entries(H.reforge)
+      const best = Object.entries(H.reforge)
         .filter(([tag]) => hardest.mod!.tags.includes(tag))
         .map(([tag, h]) => {
           const tagW = rollable.filter((x) => x.tags.includes(tag)).reduce((a, x) => a + weightFor(x, tags), 0)
-          const pTag = wAtLeast(hardest.mod!) / Math.max(1, tagW)
-          const p = Math.max(pTag, pOn(hardest, 2))
-          return { tag, h, pTag, p, chaos: harvestPrice(h.cost) / p }
+          const p = Math.max(wAtLeast(hardest.mod!) / Math.max(1, tagW), pOn(hardest, 2))
+          return { tag, h, chaos: harvestPrice(h.cost) / p }
         })
-        .sort((a, b) => a.chaos - b.chaos)
-      const best = hopts[0]
-      if (best) {
-        // уточняем шанс симуляцией: один мод гарантированно из модов тега, остальные случайны
-        const masks = sim({ forcedFrom: rollable.filter((x) => x.tags.includes(best.tag)) })
-        best.p = Math.max(1e-6, prob(masks, bit(hardest)))
-        const cs = harvestCosts(best.h.cost, 1 / best.p)
-        const lfText = best.h.cost.parts.map((x) => `${x.n} ${x.lf}`).join(' + ') + (best.h.cost.rancour ? ` + ${best.h.cost.rancour} Rancour` : '')
-        primaries.push({
-          key: 'harvest', name: T(`Harvest: реролл с модом ${best.h.label}`, `Harvest: reforge with a ${best.h.label} modifier`), mechanics: ['Harvest'], main: hardest, chaos: sum(cs),
-          notes: [HARVEST_SRC],
-          already: (r) => (r === hardest ? 1 : cond(masks, r, bit(hardest))),
-          steps: [{ kind: 'explicit', method: 'Harvest', title: T(`Harvest «Reforge a Rare item … including a ${best.h.label} modifier» до «${label(hardest)}»`, `Harvest "Reforge a Rare item … including a ${best.h.label} modifier" until "${label(hardest)}"`),
-            lines: [T(`Один реролл: ${lfText} лайфорса.`, `One reforge: ${lfText} lifeforce.`),
-              T(`Гарантирует мод ${best.h.label}; нужный среди них ≈ ${pct(best.pTag)}.`, `Guarantees a ${best.h.label} mod; the wanted one ≈ ${pct(best.pTag)}.`), ...extrasNote(hardest),
-              T(`Если выпал почти нужный набор — «Reforge a Rare item, being more likely to receive the same modifier types» (${H.similar.parts.map((x) => `${x.n} ${x.lf}`).join(' + ')}): шанс GGG не публикует, в расчёт не входит.`,
-                `If you got a near-complete set: "Reforge a Rare item, being more likely to receive the same modifier types" (${H.similar.parts.map((x) => `${x.n} ${x.lf}`).join(' + ')}); GGG does not publish its odds, so it is not costed.`)],
-            currency: cs, station: HORTI, farm: farm('Lifeforce') }]
-        })
-      }
+        .sort((a, b) => a.chaos - b.chaos)[0]
+      if (best)
+        stopPrimaries({
+          key: 'harvest', name: T(`Harvest: реролл с модом ${best.h.label}`, `Harvest: reforge with a ${best.h.label} modifier`), mechanics: ['Harvest'], method: 'Harvest',
+          station: HORTI, farmName: 'Lifeforce', masks: sim({ forcedFrom: rollable.filter((x) => x.tags.includes(best.tag)) }),
+          perTry: (n) => harvestCosts(best.h.cost, n),
+          title: (S) => T(`Harvest «Reforge … including a ${best.h.label} modifier» до ${S.length > 1 ? `${S.length} нужных модов` : `«${label(S[0])}»`}`,
+            `Harvest "Reforge … including a ${best.h.label} modifier" until ${S.length > 1 ? `${S.length} wanted mods` : `"${label(S[0])}"`}`),
+          lead: [T(`Каждый реролл гарантирует мод ${best.h.label}.`, `Every reforge guarantees a ${best.h.label} mod.`)]
+        }).forEach((p) => primaries.push(p))
     }
 
-    // Fossil: подбираем 1–2 фоссилии, которые усиливают основной мод и не блокируют нужные
+    // Fossil: 1–3 фоссилии, которые усиливают нужные моды и не блокируют ни один из них
     if (base.domain !== 'flask') {
       const ok = d.fossils.filter((f) => prices.has(f.name) && explicit.every((r) => mult(r.mod!, [f]) > 0))
-      const boosting = ok.filter((f) => mult(hardest.mod!, [f]) > 1)
-      const combos: Fossil[][] = [...boosting.map((f) => [f])]
-      for (const a of boosting) for (const b of ok) if (a !== b && !combos.some((c) => c.length === 2 && c.includes(a) && c.includes(b))) combos.push([a, b])
-      const best = combos.map((fs) => {
-        const p = pOn(hardest, 2, fs)
+      const boosting = ok.filter((f) => explicit.some((r) => mult(r.mod!, [f]) > 1)).sort((a, b) => price(a.name) - price(b.name)).slice(0, 8)
+      const combos: Fossil[][] = []
+      for (let i = 0; i < boosting.length; i++) {
+        combos.push([boosting[i]])
+        for (let j = i + 1; j < boosting.length; j++) {
+          combos.push([boosting[i], boosting[j]])
+          for (let k = j + 1; k < boosting.length; k++) combos.push([boosting[i], boosting[j], boosting[k]])
+        }
+      }
+      // грубая оценка «все нужные моды за попытку» для отбора; точный расчёт — симуляцией для лучших трёх
+      const rough = combos.map((fs) => {
         const per = fs.reduce((a, f) => a + price(f.name), 0) + price(RESONATORS[fs.length - 1])
-        return { fs, p, chaos: per / Math.max(1e-9, p) }
-      }).sort((a, b) => a.chaos - b.chaos)[0]
-      if (best) {
-        // лучшую комбинацию уточняем симуляцией с изменёнными весами
-        const masks = sim({ fs: best.fs })
-        best.p = Math.max(1e-6, prob(masks, bit(hardest)))
-        const tries = 1 / best.p
-        const cs = [...best.fs.map((f) => costA(f.name, tries)), costA(RESONATORS[best.fs.length - 1], tries)]
-        const lbl = best.fs.map((f) => f.name).join(' + ')
-        primaries.push({
-          key: 'fossil', name: T(`Фоссилии: ${lbl}`, `Fossils: ${lbl}`), mechanics: ['Fossil'], main: hardest, chaos: sum(cs), notes: [],
-          already: (r) => (r === hardest ? 1 : cond(masks, r, bit(hardest))),
-          steps: [{ kind: 'explicit', method: 'Fossil', title: T(`${RESONATORS[best.fs.length - 1]} + ${lbl} до «${label(hardest)}»`, `${RESONATORS[best.fs.length - 1]} + ${lbl} until "${label(hardest)}"`),
-            lines: [T(`Шанс за попытку ≈ ${pct(best.p)}.`, `≈ ${pct(best.p)} per try.`), T(`Без фоссилий было бы ≈ ${pct(pOn(hardest, 2))}.`, `Without fossils ≈ ${pct(pOn(hardest, 2))}.`), ...extrasNote(hardest)],
-            currency: cs, station: INV, farm: farm('Fossil') }]
-        })
+        const pAll = explicit.reduce((a, r) => a * pOn(r, 2.5, fs), 1)
+        const pHard = pOn(hardest, 2.5, fs)
+        return { fs, score: Math.min(per / Math.max(1e-12, pAll), (per / Math.max(1e-12, pHard)) * 3) }
+      }).sort((a, b) => a.score - b.score).slice(0, 3)
+      for (const { fs } of rough) {
+        const lbl = fs.map((f) => f.name).join(' + ')
+        const res = RESONATORS[fs.length - 1]
+        stopPrimaries({
+          key: 'fossil', name: T(`Фоссилии: ${lbl}`, `Fossils: ${lbl}`), mechanics: ['Fossil'], method: 'Fossil', station: INV, farmName: 'Fossil', masks: sim({ fs }),
+          perTry: (n) => [...fs.map((f) => costA(f.name, n)), costA(res, n)],
+          title: (S) => T(`${res} + ${lbl} до ${S.length > 1 ? `${S.length} нужных модов` : `«${label(S[0])}»`}`, `${res} + ${lbl} until ${S.length > 1 ? `${S.length} wanted mods` : `"${label(S[0])}"`}`),
+          lead: []
+        }).forEach((p) => primaries.push(p))
       }
     }
 
@@ -638,8 +732,9 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     const N = 1 / Math.max(1e-6, o.p)
     const misses = N - 1
     const n = o.exposed.length
-    const cs = [...(o.once ?? []), costA(o.slam, N), ...(misses > 0 ? [costA(o.annul, (misses * (n + 2)) / 2)] : []),
-      ...(o.perMiss ?? []).filter((x) => misses > 0).map((x) => costA(x.name, x.count * misses)), ...(o.onHit ?? [])]
+    const miss = (c: CraftCost): CraftCost => ({ ...c, miss: true })
+    const cs = [...(o.once ?? []), costA(o.slam, N), ...(misses > 0 ? [miss(costA(o.annul, (misses * (n + 2)) / 2))] : []),
+      ...(o.perMiss ?? []).filter(() => misses > 0).map((x) => miss(costA(x.name, x.count * misses))), ...(o.onHit ?? [])]
     const loss = ((misses * n) / 2) * avgRefin(o.exposed)
     return { cs, loss, chaos: sum(cs) + loss }
   }
@@ -839,12 +934,13 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   }
 
   /** строка «Альтернативы: …» — чтобы было видно, почему выбран этот способ */
-  const altLine = (r: Resolved, present: Resolved[], chosen: Finish, benchFree: boolean): StepLine[] => {
-    const alts = finishOptions(r, present).filter((f) => f.key !== chosen.key).slice(0, 4)
-    const busy = T(' (слот верстака занят)', ' (bench slot taken)')
-    return alts.length ? [T('Альтернативы: ', 'Alternatives: ') + alts.map((f) => `${f.short} ~${fmtC(f.chaos)}${f.key === 'bench' && !benchFree ? busy : ''}`).join(', ')] : []
-  }
+  /** альтернативы в описании шага больше не показываем (план и так выбирает самый дешёвый способ) */
+  const altLine = (_r: Resolved, _present: Resolved[], _chosen: Finish, _benchFree: boolean): StepLine[] => []
 
+  /** в методе — не больше трёх механик; верстак и мета-крафт — вспомогательные и не считаются */
+  const HELPERS = new Set(['Bench', 'Meta-craft'])
+  let capOn = true
+  const mechOk = (ms: Iterable<string>) => !capOn || new Set([...ms].filter((m) => !HELPERS.has(m))).size <= 3
   interface FinishSet { steps: CraftStep[]; weighted: { cs: CraftCost[]; k: number; extra?: number }[]; mech: Set<string> }
   const withNeed = (s: CraftStep, needP: number, extra: StepLine[]): CraftStep => ({
     ...s, lines: [...(s.lines ?? []), T(`Понадобится с вероятностью ≈ ${pct(needP)}.`, `Needed with ≈ ${pct(needP)} probability.`), ...extra]
@@ -859,18 +955,36 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     const bySide = (first: Side) => [...hard.filter((x) => x.mod!.gen === first), ...hard.filter((x) => x.mod!.gen !== first)]
     const uniq = new Map<string, Resolved[]>()
     for (const o of [hard, bySide('prefix'), bySide('suffix')]) uniq.set(o.map((x) => wantedAll.indexOf(x)).join(','), o)
+    // до четырёх модов перебираем все порядки: цена промаха зависит от того, сколько нужных модов уже на предмете
+    if (rest.length <= 4) {
+      const perm = (xs: Resolved[]): Resolved[][] => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => perm([...xs.slice(0, i), ...xs.slice(i + 1)]).map((p) => [x, ...p])))
+      for (const o of perm(rest)) uniq.set(o.map((x) => wantedAll.indexOf(x)).join(','), o)
+    }
     return [...uniq.values()]
   }
 
+  const fsCostOf = (fs: FinishSet) => fs.weighted.reduce((a, w) => a + (sum(w.cs) + (w.extra ?? 0)) * w.k, 0)
+  /** не больше трёх механик — если только без этого ограничения не выходит заметно дешевле (или мод иначе не довести) */
+  const softCap = (f: (pr: Primary) => FinishSet) => (pr: Primary): FinishSet => {
+    capOn = true
+    const a = f(pr)
+    capOn = false
+    const b = f(pr)
+    capOn = true
+    return a.steps.length < b.steps.length || fsCostOf(b) < fsCostOf(a) * 0.9 ? b : a
+  }
+  const finishSingle = (pr: Primary) => softCap(finishSingleInner)(pr)
+  const finishJoint = (pr: Primary) => softCap(finishJointInner)(pr)
+
   /** по отдельности: самые трудные моды первыми, каждому — самый дешёвый способ на этот момент */
-  function finishSingle(pr: Primary): FinishSet {
+  function finishSingleInner(pr: Primary): FinishSet {
     const set: FinishSet = { steps: [], weighted: [], mech: new Set() }
     let craftFree = craftedTargets.length === 0
     const present = initialPresent(pr)
     const rest = explicit.filter((x) => x !== pr.main && !present.includes(x)).sort((a, b) => share(a) - share(b))
     for (const r of rest) {
       const now = [...present]
-      const best = finishOptions(r, now).find((f) => craftFree || !f.usesCraft)
+      const best = finishOptions(r, now).find((f) => (craftFree || !f.usesCraft) && mechOk([...pr.mechanics, ...set.mech, ...f.mechanics]))
       present.push(r)
       if (!best) continue
       const needP = 1 - pr.already(r)
@@ -879,7 +993,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       best.mechanics.forEach((m) => set.mech.add(m))
       best.steps.forEach((s, i) => {
         set.weighted.push({ cs: s.currency, k: needP, extra: i === 0 ? extraChaos(best) : 0 })
-        set.steps.push(withNeed(s, needP, altLine(r, now, best, allow)))
+        set.steps.push({ ...withNeed(s, needP, altLine(r, now, best, allow)), lossChaos: i === 0 ? extraChaos(best) : 0 })
       })
     }
     return set
@@ -890,7 +1004,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
    * (мультимод разрешает больше). Временные крафты (закрыть сторону, блок, мета-моды) снимаются по ходу, поэтому
    * мешают только финальному моду верстака, если он нужен раньше них.
    */
-  function finishJoint(pr: Primary): FinishSet {
+  function finishJointInner(pr: Primary): FinishSet {
     const init = initialPresent(pr)
     const rest = explicit.filter((x) => x !== pr.main && !init.includes(x))
     const multiCost = multimod ? benchPrice(multimod) : 0
@@ -907,7 +1021,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       for (const multi of multimod ? [false, true] : [false]) {
         const slots = multi ? 2 - Math.min(1, craftedTargets.length) : craftedTargets.length ? 0 : 1
         const pick: number[] = []
-        const walk = (i: number, used: number, finalBench: boolean, acc: number) => {
+        const walk = (i: number, used: number, finalBench: boolean, acc: number, mech: string[] = pr.mechanics) => {
           if (best && acc >= best.cost) return
           if (i === order.length) {
             let total = acc
@@ -926,8 +1040,10 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
             if (isFinal && used >= slots) return
             // временный крафт после финального мода верстака невозможен без мультимода
             if (!isFinal && f.usesCraft && finalBench && !multi) return
+            const nextMech = [...mech, ...f.mechanics]
+            if (!mechOk(nextMech)) return
             pick.push(o)
-            walk(i + 1, used + (isFinal ? 1 : 0), finalBench || isFinal, acc + f.chaos * needs[i])
+            walk(i + 1, used + (isFinal ? 1 : 0), finalBench || isFinal, acc + f.chaos * needs[i], nextMech)
             pick.pop()
           })
         }
@@ -958,7 +1074,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       f.mechanics.forEach((m) => set.mech.add(m))
       f.steps.forEach((s, i) => {
         set.weighted.push({ cs: s.currency, k: b.needs[j], extra: i === 0 ? extraChaos(f) : 0 })
-        set.steps.push(withNeed(s, b.needs[j], altLine(r, present, f, f.key === 'bench' || benchUsed < benchSlots)))
+        set.steps.push({ ...withNeed(s, b.needs[j], altLine(r, present, f, f.key === 'bench' || benchUsed < benchSlots)), lossChaos: i === 0 ? extraChaos(f) : 0 })
       })
     })
     return set
@@ -1162,12 +1278,33 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     a: cs.filter((c) => c.attempts).reduce((s, c) => s + (c.chaos ?? 0), 0) * k,
     f: cs.filter((c) => !c.attempts).reduce((s, c) => s + (c.chaos ?? 0), 0) * k
   })
+  // источники цифр и альтернативы в описания шагов не выводим — только метод, шансы и риск промаха
+  const NOISE = /^(Альтернативы|Alternatives)|Цена — медиана|Price: median|Стоимость посчитана до|Cost counts until|Если выпал почти нужный набор|If you got a near-complete set|Рецепт сверен|Recipe checked|Цену мета-мода берём|The meta mod cost comes|^Стоимость Harvest —|^Harvest costs from/
+  const cleanLines = (ls?: StepLine[]) => ls?.filter((l) => typeof l !== 'string' || !NOISE.test(l))
+  const noMiss = (cs: CraftCost[]) => cs.filter((c) => !c.miss)
+  /** стоимость шага: без промахов и с ними (попытки — 50–100%) */
+  const stepCosts = (s: CraftStep): CraftStep => {
+    const x = split(noMiss(s.currency)), y = split(s.currency)
+    const loss = s.lossChaos ?? 0
+    return { ...s, lines: cleanLines(s.lines), cost: [x.f + x.a / 2, x.f + x.a], costMiss: [y.f + (y.a + loss) / 2, y.f + y.a + loss] }
+  }
   const parts = (body: CraftStep[], weighted: { cs: CraftCost[]; k: number; extra?: number }[]) => {
-    let a = 0
-    let f = 0
-    for (const w of weighted) { const s = split(w.cs, w.k); a += s.a + (w.extra ?? 0) * w.k; f += s.f }
-    for (const s of [...head, ...tail]) { const x = split(s.currency); a += x.a; f += x.f }
-    return { steps: [...head, ...body, ...tail], totalChaos: a + f, costMin: f + a / 2, costMax: a + f }
+    let a = 0, f = 0, ma = 0, mf = 0
+    for (const w of weighted) {
+      const s = split(noMiss(w.cs), w.k), m = split(w.cs, w.k)
+      a += s.a
+      f += s.f
+      ma += m.a + (w.extra ?? 0) * w.k
+      mf += m.f
+    }
+    for (const s of [...head, ...tail]) {
+      const x = split(s.currency)
+      a += x.a
+      f += x.f
+      ma += x.a
+      mf += x.f
+    }
+    return { steps: [...head, ...body, ...tail].map(stepCosts), totalChaos: a + f, costMin: f + a / 2, costMax: a + f, costMissMin: mf + ma / 2, costMissMax: mf + ma }
   }
   const out: (CraftVariant & { key: string })[] = []
   const withTail = (m: Iterable<string>) => [...new Set([...m, ...tailMech])]
@@ -1181,7 +1318,19 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     out.push({ key: 'influence', name: T('Влияние + бист-крафт', 'Influence + beastcraft'), mechanics: withTail(['Influence', 'Beastcraft']), notes: [],
       ...parts(inf.steps, inf.steps.map((s) => ({ cs: s.currency, k: 1 }))) })
   }
-  for (const pr of primaries) {
+  // кандидатов основного метода много (разные точки остановки): по быстрой оценке доводки оставляем по два на метод
+  const fsCost = (fs: FinishSet) => fs.weighted.reduce((a, w) => a + (sum(w.cs) + (w.extra ?? 0)) * w.k, 0)
+  const shortlist: Primary[] = []
+  {
+    const byKey = new Map<string, { pr: Primary; c: number }[]>()
+    for (const pr of primaries) {
+      const list = byKey.get(pr.key) ?? []
+      list.push({ pr, c: pr.chaos + fsCost(finishSingle(pr)) })
+      byKey.set(pr.key, list)
+    }
+    for (const list of byKey.values()) shortlist.push(...list.sort((a, b) => a.c - b.c).slice(0, 2).map((x) => x.pr))
+  }
+  for (const pr of shortlist) {
     // с двумя влияниями без Awakener предмет не собрать — такой вариант был бы неполным
     if (infGroups.length >= 2 && pr.key !== 'awakener') continue
     const notes = [...pr.notes]
@@ -1208,7 +1357,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     const single = build(finishSingle(pr))
     out.push({ key: pr.key.startsWith('ess-') ? 'essence' : pr.key, name: pr.name, notes, ...joint, single })
   }
-  out.sort((a, b) => a.costMax - b.costMax)
+  out.sort((a, b) => a.costMissMax - b.costMissMax)
   // по одному варианту на каждый основной метод (лучшая эссенция из всех), не больше восьми
   const seen = new Set<string>()
   const variantsOut: CraftVariant[] = out
