@@ -195,6 +195,8 @@ export interface ParsedItem {
   corrupted: boolean
   /** неопознанный (у уникального тогда нет имени — только база) */
   unidentified?: boolean
+  /** пороги основных показателей (из профиля рынка): защита и DPS, которых должен достичь крафт */
+  goals?: { ar?: number; ev?: number; es?: number; pdps?: number; edps?: number }
   /** камень умений: уровень, качество и статусы для прайс-чека */
   gem?: { level: number; quality: number; imbued: boolean; vaal: boolean }
   /** рыночная цена готового предмета в Divine, если известна (профиль, лот, прайс-чек) */
@@ -326,6 +328,8 @@ export interface CraftTarget {
   found: boolean
   /** откуда мод: база, эльдрич, порча, крафт… */
   source?: string
+  /** мод добавлен планировщиком, чтобы достичь порога защиты/DPS: тип мода (для «не добавлять») */
+  goal?: string
 }
 
 /** Один способ скрафтить предмет: основной метод + доводка оставшихся модов + имплиситы и финиш. */
@@ -358,6 +362,8 @@ export interface CraftPlanOptions {
   mode?: 'full' | 'finish'
   /** докрафт: id модов игры (минимальный тир), которые нужно добавить */
   add?: string[]
+  /** типы модов, которые не добавлять ради порогов защиты/DPS (пользователь снял галочку) */
+  skipGoal?: string[]
 }
 
 export interface CraftPlan {

@@ -406,6 +406,7 @@ ipcMain.handle('craft:plan', async (_e, item: ParsedItem, targets: number[], lan
       ignoreIlvl: !!popts?.ignoreIlvl,
       mode: popts?.mode,
       add: popts?.add,
+      skipGoal: popts?.skipGoal,
       basePrice: popts?.mode === 'finish' ? undefined : (baseType, lvl, max) => basePrice(league, baseType, lvl, max)
     })
   } finally {

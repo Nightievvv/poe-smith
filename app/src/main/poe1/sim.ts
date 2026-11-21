@@ -46,10 +46,15 @@ function rng(seed: number) {
 
 const fits = (m: SimMod, t: SimTarget) => m.type === t.type && m.gen === t.gen && m.reqLevel >= t.reqLevel
 
-export function simulate(pool: SimMod[], targets: SimTarget[], o: SimOptions): Uint32Array {
+/** Маски нужных модов по роллам + сколько префиксов и суффиксов занято на каждом ролле. */
+export type SimResult = Uint32Array & { pre: Uint8Array; suf: Uint8Array }
+
+export function simulate(pool: SimMod[], targets: SimTarget[], o: SimOptions): SimResult {
   const n = o.n ?? 20000
   const rand = rng(0x5eed + pool.length * 31 + targets.length)
-  const masks = new Uint32Array(n)
+  const masks = new Uint32Array(n) as SimResult
+  masks.pre = new Uint8Array(n)
+  masks.suf = new Uint8Array(n)
   const bitOf = (m: SimMod) => targets.reduce((acc, t, i) => (fits(m, t) ? acc | (1 << i) : acc), 0)
   const poolBits = pool.map(bitOf)
   const fromBits = (o.forcedFrom ?? []).map(bitOf)
@@ -100,6 +105,8 @@ export function simulate(pool: SimMod[], targets: SimTarget[], o: SimOptions): U
       }
     }
     masks[s] = mask
+    masks.pre[s] = side.prefix
+    masks.suf[s] = side.suffix
   }
   return masks
 }

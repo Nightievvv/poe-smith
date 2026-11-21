@@ -150,7 +150,12 @@ function craftItemFor(p: Profile, q: MarketQuery, examples: ExampleItem[], media
     ? texts.map((text) => ({ text, kind: 'explicit' as const }))
     : (typical?.mods ?? []).filter((m) => m.kind !== 'implicit' && m.kind !== 'enchant').map((m) => ({ ...m, kind: m.kind === 'crafted' ? ('crafted' as const) : m.kind }))
   if (!mods.length) return undefined
-  return { itemClass: '', rarity: p.rarity === 'magic' ? 'Magic' : 'Rare', name: '', baseType, itemLevel: ilvl, slot: q.slot, mods, props: {}, corrupted: false, valueDiv: median || undefined }
+  // пороги защиты и DPS профиля — планировщик доберёт их модами, качеством и выбором базы
+  const goals = { ...(p.defence ?? {}), ...(p.pdps ? { pdps: p.pdps } : {}), ...(p.edps ? { edps: p.edps } : {}) }
+  return {
+    itemClass: '', rarity: p.rarity === 'magic' ? 'Magic' : 'Rare', name: '', baseType, itemLevel: ilvl, slot: q.slot, mods, props: {}, corrupted: false,
+    valueDiv: median || undefined, ...(Object.keys(goals).length ? { goals } : {})
+  }
 }
 
 /** Только кэш: без запросов к трейду. */

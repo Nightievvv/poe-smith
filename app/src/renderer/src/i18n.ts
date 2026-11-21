@@ -1,6 +1,9 @@
 import type { HotkeyId, Lang } from '../../shared/types'
 
 const ru = {
+  'craft.goalOff': "Не добавлять этот мод ради порога",
+  'craft.goalSkipped': "Исключено модов для порога: {n}.",
+  'craft.goalRestore': "Вернуть",
   'opp.discover': "Найти выгодные сочетания модов",
   'opp.discoverHint': "Смотрит 40 свежих редких предметов слота дороже порога и находит моды, которые чаще всего встречаются вместе. Сочетание можно добавить в профили — тогда его проверят «Возможности». 1 поиск + 4 выгрузки трейда.",
   'opp.minDiv': "От, div",
@@ -350,6 +353,9 @@ const ru = {
 type Key = keyof typeof ru
 
 const en: Record<Key, string> = {
+  'craft.goalOff': "Do not add this mod for the threshold",
+  'craft.goalSkipped': "Threshold mods excluded: {n}.",
+  'craft.goalRestore': "Restore",
   'opp.discover': "Find profitable mod combinations",
   'opp.discoverHint': "Looks at 40 fresh rare items of the slot above the price and finds the mods that most often come together. Add a combination to profiles and Opportunities will check it. 1 trade search + 4 fetches.",
   'opp.minDiv': "From, div",

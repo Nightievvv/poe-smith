@@ -2,7 +2,7 @@ import type { CraftCost, CraftPlan, CraftStep, CraftTarget, CraftVariant, Lang, 
 import { loadCraftData, matchMod, matchModText, weightFor, type BenchCraft, type Fossil, type Mod } from './craftdata'
 import { getPriceBook } from './ninja'
 import { RES_LIFEFORCE, lifeforceName, loadHarvest, type HarvestCost } from './harvest'
-import { JEWEL_COUNTS, MAGIC_COUNTS, RARE_COUNTS, prob, simulate, type SimMod, type SimTarget } from './sim'
+import { JEWEL_COUNTS, MAGIC_COUNTS, RARE_COUNTS, prob, simulate, type SimMod, type SimResult, type SimTarget } from './sim'
 import { domainOk } from './modinfo'
 
 /** Влияния: суффикс тега в данных игры → название влияния и зверь для «Add a Mod to a … Item». */
@@ -49,6 +49,9 @@ interface Resolved {
   kept?: boolean
   /** докрафт: мод нужно добавить */
   added?: boolean
+  /** мод добавлен ради порога защиты/DPS */
+  goalKey?: 'ar' | 'ev' | 'es' | 'pdps' | 'edps'
+  goalNeed?: number
 }
 
 interface Primary {
@@ -78,6 +81,8 @@ export interface PlanOptions {
   add?: string[]
   /** докрафт: тексты модов, которые нужно добавить (мод игры подбирается по значению) */
   addTexts?: string[]
+  /** типы модов, которые не добавлять ради порогов защиты/DPS */
+  skipGoal?: string[]
 }
 
 /** «+42 to maximum Mana» → «+ to maximum Mana»: в шагах показываем тир, а не конкретное значение. */
@@ -245,6 +250,100 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       const mod = cands.find((x) => x.reqLevel <= ilvl) ?? cands[0]
       if (mod) resolvedRaw.push({ text, kind: 'explicit', gen: mod.gen as Side, mod, source: 'explicit', added: true })
     }
+  // ---------- пороги защиты и DPS (из профиля рынка): моды на показатель, качество, сравнение баз ----------
+  type GoalKey = 'ar' | 'ev' | 'es' | 'pdps' | 'edps'
+  const GOAL_NAME: Record<GoalKey, [string, string]> = { ar: ['брони', 'Armour'], ev: ['уклонения', 'Evasion'], es: ['энергощита', 'Energy Shield'], pdps: ['pDPS', 'pDPS'], edps: ['eDPS', 'eDPS'] }
+  const DEF_PROP: Record<'ar' | 'ev' | 'es', string> = { ar: 'armour', ev: 'evasion', es: 'energy_shield' }
+  const FLAT_RE: Record<'ar' | 'ev' | 'es', RegExp> = { ar: /^\+.* to Armour$/, ev: /^\+.* to Evasion Rating$/, es: /^\+.* to maximum Energy Shield$/ }
+  const INC_RE: Record<'ar' | 'ev' | 'es', RegExp> = {
+    ar: /% increased (Armour|Armour and Evasion|Armour and Energy Shield|Armour, Evasion and Energy Shield)$/,
+    ev: /% increased (Evasion Rating|Armour and Evasion|Evasion and Energy Shield|Armour, Evasion and Energy Shield)$/,
+    es: /% increased (Energy Shield|Armour and Energy Shield|Evasion and Energy Shield|Armour, Evasion and Energy Shield)$/
+  }
+  const goals = !finish && item.goals ? (Object.entries(item.goals).filter(([, v]) => v && v > 0) as [GoalKey, number][]) : []
+  /** значение показателя на базе b с модами mods и 20% качества; mode: max — лучшие роллы, mid — средние */
+  const goalValue = (b: typeof base, mods: Mod[], key: GoalKey, mode: 'max' | 'mid') => {
+    const pick = (r?: [number, number]) => (r ? (mode === 'max' ? Math.max(r[0], r[1]) : (r[0] + r[1]) / 2) : 0)
+    const lines = mods.flatMap((m) => m.text.split('\n').map((t, i) => ({ t, r: m.lines[i]?.ranges ?? [] })))
+    const sumOf = (re: RegExp, idx = 0) => lines.filter((l) => re.test(l.t)).reduce((a, l) => a + pick(l.r[idx]), 0)
+    const q = 20
+    if (key === 'ar' || key === 'ev' || key === 'es') {
+      const bp = b.props[DEF_PROP[key]]
+      if (!bp) return 0
+      const baseV = mode === 'max' ? bp.max : (bp.min + bp.max) / 2
+      return Math.round((baseV + sumOf(FLAT_RE[key])) * (1 + (sumOf(INC_RE[key]) + q) / 100))
+    }
+    const p = b.props
+    if (!p.attack_time) return 0
+    const as = sumOf(/increased Attack Speed$/)
+    const aps = (1000 / p.attack_time) * (1 + as / 100)
+    if (key === 'pdps') {
+      if (!p.physical_damage_max) return 0
+      const fMin = sumOf(/^Adds .* Physical Damage$/, 0), fMax = sumOf(/^Adds .* Physical Damage$/, 1)
+      return Math.round(((p.physical_damage_min + fMin + p.physical_damage_max + fMax) / 2) * (1 + (sumOf(/increased Physical Damage$/) + q) / 100) * aps)
+    }
+    const ele = lines.filter((l) => /^Adds .* (Fire|Cold|Lightning) Damage$/.test(l.t)).reduce((a, l) => a + (pick(l.r[0]) + pick(l.r[1])) / 2, 0)
+    return Math.round(ele * aps)
+  }
+  // кандидаты: локальные моды на показатель (плоский, процент; для eDPS — плоский урон стихий), по тирам до ilvl
+  const candTypes = (key: GoalKey): Mod[][] => {
+    const res: RegExp[] = key === 'pdps' ? [/^Adds .* Physical Damage$/, /^\(?[\d-]+\)?% increased Physical Damage$/]
+      : key === 'edps' ? [/^Adds .* Fire Damage$/, /^Adds .* Cold Damage$/, /^Adds .* Lightning Damage$/]
+        : [FLAT_RE[key], INC_RE[key]]
+    return res.map((re) => {
+      const tiers = pool.filter((m) => m.gen === 'prefix' && m.reqLevel <= ilvl && !m.text.includes('\n') && re.test(m.text.replace(/\(([\d.]+)-([\d.]+)\)/g, '$2')))
+      // один тип мода на регулярку: самый частый (по весу) тип
+      const byType = new Map<string, Mod[]>()
+      for (const m of tiers) byType.set(m.type, [...(byType.get(m.type) ?? []), m])
+      const best = [...byType.values()].sort((a, b) => b.reduce((x, m) => x + weightFor(m, tags), 0) - a.reduce((x, m) => x + weightFor(m, tags), 0))[0] ?? []
+      return best.filter((m) => !(opts.skipGoal ?? []).includes(m.type)).sort((a, b) => b.reqLevel - a.reqLevel).slice(0, 5)
+    }).filter((x) => x.length)
+  }
+  const prefixW = pool.filter((m) => m.gen === 'prefix' && m.reqLevel <= ilvl).reduce((a, m) => a + weightFor(m, tags), 0)
+  const tierShare = (m: Mod) => pool.filter((x) => x.type === m.type && x.gen === m.gen && x.reqLevel >= m.reqLevel && x.reqLevel <= ilvl).reduce((a, x) => a + weightFor(x, tags), 0) / Math.max(1, prefixW)
+  const sampleText = (m: Mod) => m.text.replace(/\((-?[\d.]+)-(-?[\d.]+)\)/g, '$1')
+  const goalWarn: string[] = []
+  const goalMods: Mod[] = []
+  if (goals.length) {
+    const usedGroups = new Set(resolvedRaw.flatMap((r) => r.mod?.groups ?? []))
+    const targetMods = () => [...resolvedRaw.filter((r) => r.mod && (r.source === 'explicit' || r.source === 'fractured')).map((r) => r.mod!), ...goalMods]
+    for (const [key, need] of goals) {
+      const freePre = () => maxSide - targetMods().filter((m) => m.gen === 'prefix').length
+      if (goalValue(base, targetMods(), key, 'mid') >= need) continue
+      const types = candTypes(key).map((ts) => ts.filter((m) => !m.groups.some((g) => usedGroups.has(g))))
+      const freeBefore = freePre()
+      // перебор: по одному тиру каждого типа (или без него), не больше свободных префиксов
+      let best: { mods: Mod[]; score: number; value: number } | null = null
+      let reachMax = goalValue(base, targetMods(), key, 'mid')
+      let top: { mods: Mod[]; value: number } | null = null
+      const walk = (i: number, chosen: Mod[]) => {
+        if (i === types.length) {
+          if (!chosen.length || chosen.length > freePre()) return
+          const value = goalValue(base, [...targetMods(), ...chosen], key, 'mid')
+          if (value > reachMax) top = { mods: [...chosen], value }
+          reachMax = Math.max(reachMax, value)
+          if (value < need) return
+          const score = chosen.reduce((a, m) => a - Math.log(Math.max(1e-9, tierShare(m))), 0)
+          if (!best || score < best.score) best = { mods: [...chosen], score, value }
+          return
+        }
+        walk(i + 1, chosen)
+        for (const m of types[i]) walk(i + 1, [...chosen, m])
+      }
+      walk(0, [])
+      const b = (best ?? top) as { mods: Mod[]; value: number } | null
+      if (b) {
+        for (const m of b.mods) {
+          goalMods.push(m)
+          m.groups.forEach((g) => usedGroups.add(g))
+          resolvedRaw.push({ text: sampleText(m), kind: 'explicit', gen: 'prefix', mod: m, source: 'explicit', goalKey: key, goalNeed: need })
+        }
+      }
+      if (!best)
+        goalWarn.push(T(`Порог ${GOAL_NAME[key][0]} ${need} не достигается: максимум ~${reachMax} (свободных префиксов: ${freeBefore}). Посмотрите альтернативные базы на шаге базы.`,
+          `The ${GOAL_NAME[key][1]} threshold ${need} is out of reach: ~${reachMax} at most (${freeBefore} free prefixes). See alternative bases in the base step.`))
+    }
+  }
   // строки одного гибридного мода (например, «+354 to Armour» и «+352 to Evasion Rating») — это один мод, а не два
   const resolved: Resolved[] = []
   for (const r of resolvedRaw) {
@@ -336,8 +435,11 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   const targets: CraftTarget[] = resolved.map((r) => ({
     text: r.text, kind: r.kind, tier: r.tier ?? (r.mod && (r.source === 'explicit' || r.source === 'fractured') ? tierOf(r.mod) : undefined),
     gen: r.kind === 'implicit' || r.kind === 'enchant' ? 'implicit' : r.gen, found: r.source !== 'unknown',
-    source: r.source === 'influence' ? `${SOURCE.influence}: ${r.inf!.name}` : SOURCE[r.source]
+    source: r.goalKey ? T(`для порога ${GOAL_NAME[r.goalKey][0]} ≥ ${r.goalNeed}`, `for ${GOAL_NAME[r.goalKey][1]} ≥ ${r.goalNeed}`)
+      : r.source === 'influence' ? `${SOURCE.influence}: ${r.inf!.name}` : SOURCE[r.source],
+    ...(r.goalKey && r.mod ? { goal: r.mod.type } : {})
   }))
+  warnings.push(...goalWarn)
   for (const r of resolved) if (r.source === 'unknown') warnings.push(T(`Не нашёл «${r.text}» в данных игры — шаг для него не построен.`, `"${r.text}" not found in game data; no step for it.`))
 
   // ---------- вероятности (с учётом фоссилий) ----------
@@ -475,7 +577,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     }
     type StopBase = {
       key: string; name: string; mechanics: string[]; method: string; station: string; farmName: string
-      masks: Uint32Array; perTry: (tries: number) => CraftCost[]; title: (S: Resolved[]) => string; lead: StepLine[]
+      masks: SimResult; perTry: (tries: number) => CraftCost[]; title: (S: Resolved[]) => string; lead: StepLine[]
       guaranteed?: Resolved
     }
     const stopPrimaries = (b: StopBase): Primary[] => {
@@ -491,45 +593,124 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
         const reqMasks = req.map((x) => altBit.get(x) ?? bit(x))
         const anyMask = anyOf.reduce((a, x) => a | bit(x), 0)
         const ok = (m: number) => reqMasks.every((q) => (m & q) !== 0) && (!anyMask || (m & anyMask) !== 0)
-        let hits = 0
-        for (let i = 0; i < b.masks.length; i++) if (ok(b.masks[i])) hits++
-        const P = hits / b.masks.length
-        if (P < 2e-5) return
-        /** P(мод r есть точного цвета | точка остановки достигнута) */
-        const given = (r: Resolved) => {
-          let both = 0
-          for (let i = 0; i < b.masks.length; i++) if (ok(b.masks[i]) && b.masks[i] & bit(r)) both++
-          return hits ? both / hits : 0
+        const M = b.masks
+        const total = M.length
+        // занятость сторон на ролле: нужные моды, мусор и сколько мусора придётся снять, чтобы осталось место под недостающие нужные
+        const occupancy = (i: number) => {
+          const m = M[i]
+          const o = { prefix: { want: 0, miss: 0, occ: M.pre[i] }, suffix: { want: 0, miss: 0, occ: M.suf[i] } }
+          explicit.forEach((x) => {
+            const side = x.mod!.gen as Side
+            if ((m & (altBit.get(x) ?? bit(x))) !== 0) o[side].want++
+            else o[side].miss++
+          })
+          const rem = (s: Side) => Math.max(0, o[s].miss - (maxSide - o[s].occ))
+          return { o, rPre: rem('prefix'), rSuf: rem('suffix') }
         }
-        const cs = b.perTry(1 / P)
-        const head = S[0] ?? anyOf[0]
-        const steps: CraftStep[] = [{ kind: 'explicit', method: b.method, title: b.title(S.length ? S : [head]),
-          lines: [...b.lead,
-            ...(req.length ? [T(anyOf.length ? 'Ждём моды:' : 'Ждём все моды сразу:', anyOf.length ? 'Wait for:' : 'Wait for all of:'), ...modLines(req)] : []),
-            ...(anyOf.length ? [T('и хотя бы один из:', 'and at least one of:'), ...modLines(anyOf)] : []),
-            T(`Шанс за попытку ≈ ${pct(P)}.`, `≈ ${pct(P)} per try.`),
-            ...(req.some((r) => resEl(r)) ? [T('Резист любого цвета того же тира подходит — цвет меняем шагом ниже.', 'A resistance of any colour at that tier counts: change the colour below.')] : []),
-            ...(free.length > req.length ? [T('Если заодно выпали другие нужные моды — пропустите их шаги доводки.', 'If other wanted mods roll too, skip their finishing steps.')] : [])],
-          currency: cs, station: b.station, farm: farm(b.farmName) }]
-        let chaos = sum(cs)
-        const mech = [...b.mechanics]
-        for (const r of req) {
-          const el = resEl(r)
-          if (!el) continue
-          const pSwap = 1 - given(r)
-          if (pSwap < 0.01) continue
-          const hc = harvestCosts(swapCost(el), pSwap)
-          chaos += sum(hc)
-          if (!mech.includes('Harvest')) mech.push('Harvest')
-          steps.push({ kind: 'explicit', method: 'Harvest', optional: true,
-            title: T(`Если резист не ${el}: Harvest — сменить сопротивление на ${el}`, `If the resistance is not ${el}: Harvest — change it to ${el}`),
-            lines: [T(`Понадобится с вероятностью ≈ ${pct(pSwap)}.`, `Needed with ≈ ${pct(pSwap)} probability.`),
-              T(`Horticrafting: ${H.resChange} лайфорса цвета исходного резиста + ${H.resChange} цвета ${el}.`, `Horticrafting: ${H.resChange} lifeforce of the source colour + ${H.resChange} of the ${el} colour.`)],
-            currency: hc, station: HORTI, farm: farm('Lifeforce') })
+        let hits = 0, hitsFree = 0
+        const acc = { rPre: 0, rSuf: 0, jPre: 0, jSuf: 0, wPre: 0, wSuf: 0, occ: 0, dirty: 0 }
+        for (let i = 0; i < total; i++) {
+          if (!ok(M[i])) continue
+          hits++
+          const c = occupancy(i)
+          if (!c.rPre && !c.rSuf) hitsFree++
+          else acc.dirty++
+          acc.rPre += c.rPre
+          acc.rSuf += c.rSuf
+          acc.jPre += c.o.prefix.occ - c.o.prefix.want
+          acc.jSuf += c.o.suffix.occ - c.o.suffix.want
+          acc.wPre += c.o.prefix.want
+          acc.wSuf += c.o.suffix.want
+          acc.occ += c.o.prefix.occ + c.o.suffix.occ
         }
-        const setS = new Set(S)
-        out.push({ key: b.key, name: b.name, mechanics: mech, main: head, chaos, notes: [], steps,
-          already: (r) => (setS.has(r) ? 1 : given(r)) })
+        if (hits / total < 2e-5) return
+        const make = (strategy: 'free' | 'clean') => {
+          const pred = strategy === 'free' ? (i: number) => ok(M[i]) && (() => { const c = occupancy(i); return !c.rPre && !c.rSuf })() : (i: number) => ok(M[i])
+          const n = strategy === 'free' ? hitsFree : hits
+          const P = n / total
+          if (P < 2e-5) return
+          /** P(мод r есть точного цвета | точка остановки достигнута) */
+          const given = (r: Resolved) => {
+            let both = 0
+            for (let i = 0; i < total; i++) if (M[i] & bit(r) && pred(i)) both++
+            return n ? both / n : 0
+          }
+          const cs = b.perTry(1 / P)
+          const head = S[0] ?? anyOf[0]
+          const steps: CraftStep[] = [{ kind: 'explicit', method: b.method, title: b.title(S.length ? S : [head]),
+            lines: [...b.lead,
+              ...(req.length ? [T(anyOf.length ? 'Ждём моды:' : 'Ждём все моды сразу:', anyOf.length ? 'Wait for:' : 'Wait for all of:'), ...modLines(req)] : []),
+              ...(anyOf.length ? [T('и хотя бы один из:', 'and at least one of:'), ...modLines(anyOf)] : []),
+              ...(strategy === 'free' && acc.dirty ? [T('Останавливайтесь только на ролле, где хватает свободных слотов под остальные нужные моды.', 'Stop only on a roll with enough free slots for the remaining wanted mods.')] : []),
+              T(`Шанс за попытку ≈ ${pct(P)}.`, `≈ ${pct(P)} per try.`),
+              ...(req.some((r) => resEl(r)) ? [T('Резист любого цвета того же тира подходит — цвет меняем шагом ниже.', 'A resistance of any colour at that tier counts: change the colour below.')] : []),
+              ...(free.length > req.length ? [T('Если заодно выпали другие нужные моды — пропустите их шаги доводки.', 'If other wanted mods roll too, skip their finishing steps.')] : [])],
+            currency: cs, station: b.station, farm: farm(b.farmName) }]
+          let chaos = sum(cs)
+          const mech = [...b.mechanics]
+          // расчистка: мусорные моды занимают слоты, нужные для доводки
+          if (strategy === 'clean' && acc.dirty) {
+            const pNeed = acc.dirty / hits
+            const avg = (v: number) => v / Math.max(1, acc.dirty)
+            const rPre = avg(acc.rPre), rSuf = avg(acc.rSuf)
+            const jPre = Math.max(rPre, acc.jPre / hits), jSuf = Math.max(rSuf, acc.jSuf / hits)
+            const wPre = acc.wPre / hits, wSuf = acc.wSuf / hits
+            const N = acc.occ / hits
+            const refinEarly = (x: Resolved) => (price('Exalted Orb') + price('Orb of Annulment')) / Math.max(1e-6, share(x))
+            const keptRefin = explicit.length ? explicit.reduce((a, x) => a + refinEarly(x), 0) / explicit.length : 0
+            // обычный Annulment бьёт любой мод, Eldritch — только свою сторону (дороже, но реже снимает нужное)
+            const plain = (r: number, j: number) => { const tr = r > 0 ? (r * N) / Math.max(1e-6, j) : 0; return { tr, lost: tr * (wPre + wSuf) / Math.max(1e-6, N), orb: 'Orb of Annulment' } }
+            const eld = (r: number, j: number, w: number) => { const ns = j + w; const tr = r > 0 ? (r * ns) / Math.max(1e-6, j) : 0; return { tr, lost: tr * w / Math.max(1e-6, ns), orb: 'Eldritch Orb of Annulment' } }
+            const canEld = ELDRITCH_CLASSES.has(base.itemClass) && prices.has('Eldritch Orb of Annulment')
+            const pick = (r: number, j: number, w: number) => {
+              const a = plain(r, j)
+              const e = canEld ? eld(r, j, w) : null
+              const costOf = (x: { tr: number; lost: number; orb: string }) => x.tr * price(x.orb) + x.lost * keptRefin
+              return e && costOf(e) < costOf(a) ? e : a
+            }
+            const pp = pick(rPre, jPre, wPre), ps = pick(rSuf, jSuf, wSuf)
+            const ccs: CraftCost[] = []
+            let loss = 0
+            for (const [x, side] of [[pp, 'prefix'], [ps, 'suffix']] as const) {
+              if (!x.tr) continue
+              ccs.push({ ...costA(x.orb, x.tr), miss: false })
+              if (x.orb.startsWith('Eldritch')) ccs.push(cost(side === 'prefix' ? 'Lesser Eldritch Ember' : 'Lesser Eldritch Ichor', 1))
+              loss += x.lost * keptRefin
+            }
+            if (ccs.length) {
+              const cleanCost = sum(ccs) + loss
+              chaos += cleanCost * pNeed
+              if (ccs.some((c) => c.name.startsWith('Eldritch')) && !mech.includes('Eldritch')) mech.push('Eldritch')
+              steps.push({ kind: 'explicit', method: 'Currency', optional: pNeed < 0.999,
+                title: T('Снять мусорные моды, чтобы освободить слоты под доводку', 'Remove junk mods to free slots for finishing'),
+                lines: [T(`После основного метода в среднем мешают ~${fmtN(rPre)} префикса и ~${fmtN(rSuf)} суффикса.`, `After the main method ~${fmtN(rPre)} prefixes and ~${fmtN(rSuf)} suffixes are in the way on average.`),
+                  ...(pp.tr ? [T(`Префиксы: ${pp.orb}${pp.orb.startsWith('Eldritch') ? ' при доминировании Searing Exarch' : ''}.`, `Prefixes: ${pp.orb}${pp.orb.startsWith('Eldritch') ? ' with Searing Exarch dominance' : ''}.`)] : []),
+                  ...(ps.tr ? [T(`Суффиксы: ${ps.orb}${ps.orb.startsWith('Eldritch') ? ' при доминировании Eater of Worlds' : ''}.`, `Suffixes: ${ps.orb}${ps.orb.startsWith('Eldritch') ? ' with Eater of Worlds dominance' : ''}.`)] : []),
+                  ...(loss > 0.5 ? [T(`Сфера может снять и нужный мод — его повторная доводка ~${fmtC(loss)}.`, `An orb may remove a wanted mod too; re-finishing it ~${fmtC(loss)}.`)] : []),
+                  ...(pNeed < 0.999 ? [T(`Понадобится с вероятностью ≈ ${pct(pNeed)}.`, `Needed with ≈ ${pct(pNeed)} probability.`)] : [])],
+                currency: ccs.map((c) => (c.chaos != null ? { ...c, chaos: c.chaos * pNeed } : c)), station: INV, farm: farm('Orb of Annulment'), lossChaos: loss * pNeed })
+            }
+          }
+          for (const r of req) {
+            const el = resEl(r)
+            if (!el) continue
+            const pSwap = 1 - given(r)
+            if (pSwap < 0.01) continue
+            const hc = harvestCosts(swapCost(el), pSwap)
+            chaos += sum(hc)
+            if (!mech.includes('Harvest')) mech.push('Harvest')
+            steps.push({ kind: 'explicit', method: 'Harvest', optional: true,
+              title: T(`Если резист не ${el}: Harvest — сменить сопротивление на ${el}`, `If the resistance is not ${el}: Harvest — change it to ${el}`),
+              lines: [T(`Понадобится с вероятностью ≈ ${pct(pSwap)}.`, `Needed with ≈ ${pct(pSwap)} probability.`),
+                T(`Horticrafting: ${H.resChange} лайфорса цвета исходного резиста + ${H.resChange} цвета ${el}.`, `Horticrafting: ${H.resChange} lifeforce of the source colour + ${H.resChange} of the ${el} colour.`)],
+              currency: hc, station: HORTI, farm: farm('Lifeforce') })
+          }
+          const setS = new Set(S)
+          out.push({ key: b.key, name: b.name, mechanics: mech, main: head, chaos, notes: [], steps,
+            already: (r) => (setS.has(r) ? 1 : given(r)) })
+        }
+        make('free')
+        make('clean')
       }
       for (const req of subsets(free, 4)) emit(req, [])
       // «все из req + хотя бы один из остальных»: остальные доводятся отдельными шагами
@@ -1236,6 +1417,51 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     }
   }
   const baseWarn = finish ? [] : defenceCheck()
+  const goalLines: StepLine[] = []
+  /** максимум показателя на базе b: моды целей (кроме добавленных ради порога) + лучшие моды на показатель в свободных префиксах */
+  const bestReach = (b: typeof base, key: GoalKey) => {
+    const core = resolved.filter((r) => r.mod && !r.goalKey && (r.source === 'explicit' || r.source === 'fractured')).map((r) => r.mod!)
+    const used = new Set(core.flatMap((m) => m.groups))
+    const free = maxSide - core.filter((m) => m.gen === 'prefix').length
+    const types = candTypes(key).map((ts) => ts.filter((m) => !m.groups.some((g) => used.has(g))))
+    let max = goalValue(b, core, key, 'max')
+    const walk = (i: number, chosen: Mod[]) => {
+      if (i === types.length) {
+        if (chosen.length <= free) max = Math.max(max, goalValue(b, [...core, ...chosen], key, 'max'))
+        return
+      }
+      walk(i + 1, chosen)
+      if (types[i][0]) walk(i + 1, [...chosen, types[i][0]])
+    }
+    walk(0, [])
+    return max
+  }
+  if (goals.length) {
+    const allMods = resolved.filter((r) => r.mod && (r.source === 'explicit' || r.source === 'fractured')).map((r) => r.mod!)
+    const range = (key: GoalKey, b: typeof base) => {
+      if (key === 'pdps' || key === 'edps') return ''
+      const bp = b.props[DEF_PROP[key]]
+      return bp ? `${bp.min}–${bp.max}` : ''
+    }
+    for (const [key, need] of goals) {
+      const br = range(key, base)
+      if (br) goalLines.push(T(`${GOAL_NAME[key][1]} базы: ${br}.`, `Base ${GOAL_NAME[key][1]}: ${br}.`))
+      const max = goalValue(base, allMods, key, 'max')
+      goalLines.push(T(`С 20% качества и целевыми модами: до ~${max} ${GOAL_NAME[key][0]} (нужно ≥ ${need}).`, `With 20% quality and the target mods: up to ~${max} ${GOAL_NAME[key][1]} (need ≥ ${need}).`))
+      if (max < need) goalLines.push({ warn: T(`На этой базе порог ${need} не набрать — возьмите одну из баз ниже.`, `This base cannot reach ${need}: pick one of the bases below.`) })
+    }
+    // альтернативные базы того же класса и типа защиты (до 4), с максимумом показателя при тех же модах
+    const sameKind = (b: typeof base) => b.itemClass === base.itemClass && b.name !== base.name && b.dropLevel <= ilvl &&
+      (['armour', 'evasion', 'energy_shield'] as const).every((p) => !!b.props[p] === !!base.props[p]) && !!b.props.attack_time === !!base.props.attack_time
+    const alts = [...d.bases.values()].map((l) => l[0]).filter(sameKind)
+      .map((b) => ({ b, vals: goals.map(([key]) => bestReach(b, key)) }))
+      .sort((x, y) => y.vals[0] - x.vals[0])
+      .slice(0, 4)
+    if (alts.length) {
+      goalLines.push(T('Альтернативные базы (максимум с целевыми модами и лучшими модами на показатель):', 'Alternative bases (maximum with the target mods and the best stat mods):'))
+      for (const a of alts) goalLines.push({ mod: `${a.b.name} — ${goals.map(([key], i) => `${GOAL_NAME[key][1]} до ~${a.vals[i]}`).join(', ')}` })
+    }
+  }
   const baseCost: CraftCost[] = bp ? [{ name: T(`${base.name}, ilvl ${ilvlRange} (трейд)`, `${base.name}, ilvl ${ilvlRange} (trade)`), count: '×1', chaos: bp.chaos }] : []
   const head: CraftStep[] = finish ? [] : [{
     kind: 'base', method: 'Base',
@@ -1252,6 +1478,7 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       bp ? T(`Цена — медиана ${bp.count} самых дешёвых белых баз на трейде.`, `Price: median of the ${bp.count} cheapest white bases on trade.`)
         : bpError ? T('Цену базы получить не удалось (трейд недоступен) — она не входит в итог.', 'Could not get the base price (trade unavailable); it is not included.')
           : T('Белых баз этого уровня на трейде нет — цена не входит в итог.', 'No white bases of this level on trade; price not included.'),
+      ...goalLines,
       ...baseWarn.map((w) => (typeof w === 'string' ? { warn: w } : w))
     ],
     currency: [...baseCost, ...(fractured.length ? [cost('Fracturing Orb', 1)] : [])],
@@ -1280,9 +1507,11 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     tail.push({ kind: 'implicit', method: 'Labyrinth', title: T(`Энчант: «${r.text}»`, `Enchant: "${r.text}"`),
       lines: [T('Энчанты шлемов, ботинок и перчаток — Лабиринт.', 'Helmet/boots/gloves enchants come from the Labyrinth.'), T('Часть энчантов даёт Harvest.', 'Some come from Harvest.')],
       currency: [], station: T('Лабиринт', 'Labyrinth'), farm: T('Лабиринт (Eternal для высших энчантов)', 'Labyrinth (Eternal for top enchants)') })
-  if (item.props.quality && item.props.quality > 0) {
-    const cur = item.props.weapon ? "Blacksmith's Whetstone" : item.props.defence ? "Armourer's Scrap" : null
-    tail.push({ kind: 'finish', method: 'Currency', title: T(`Качество ${item.props.quality}%`, `Quality ${item.props.quality}%`),
+  if ((item.props.quality && item.props.quality > 0) || goals.length) {
+    const isWeaponGoal = goals.some(([k]) => k === 'pdps' || k === 'edps')
+    const cur = item.props.weapon || isWeaponGoal ? "Blacksmith's Whetstone" : item.props.defence || goals.length ? "Armourer's Scrap" : null
+    const qv = item.props.quality || 20
+    tail.push({ kind: 'finish', method: 'Currency', title: T(`Качество ${qv}%`, `Quality ${qv}%`),
       lines: cur ? undefined : [T('Для бижутерии — катализаторы под нужные моды.', 'Jewellery: catalysts for the right mod tags.'), T('Для флаконов — Glassblower\'s Bauble.', 'Flasks: Glassblower\'s Bauble.')],
       currency: cur ? [cost(cur, 8, '×4–20')] : [], station: INV, farm: farm(cur ?? '') })
   }

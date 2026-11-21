@@ -94,6 +94,7 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
     setAddable(null)
     if (item) window.api.craftAddable(item).then(setAddable).catch(() => setAddable(null))
     setPlan(null)
+    setSkipGoal([])
     setPreMsg(null)
     setIgnoreIlvl(false)
     setError(null)
@@ -143,7 +144,9 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
     })
   }, [stepSignal])
 
-  const build = async (ign = ignoreIlvl) => {
+  // типы модов, которые не добавлять ради порогов защиты/DPS (снятые галочки)
+  const [skipGoal, setSkipGoal] = useState<string[]>([])
+  const build = async (ign = ignoreIlvl, skip = skipGoal) => {
     if (!item) return
     setBusy(true)
     setError(null)
@@ -152,7 +155,7 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
       // докрафт: имплиситы и энчанты всегда остаются; снимаются только явные моды без галочки
       const idx = selected.map((s, i) => (s || (finish && (item.mods[i].kind === 'implicit' || item.mods[i].kind === 'enchant')) ? i : -1)).filter((i) => i >= 0)
       const add = finish ? picks.map((p) => addable?.groups.find((g) => g.id === p.gid)?.tiers[p.tier]?.id).filter((x): x is string => !!x) : undefined
-      const p = await window.api.craftPlan(item, idx, lang, { ignoreIlvl: ign, mode: craftMode, add })
+      const p = await window.api.craftPlan(item, idx, lang, { ignoreIlvl: ign, mode: craftMode, add, skipGoal: skip })
       setPlan(p)
       const first = order(p, mode)[0]?.i ?? 0
       setVi(first)
@@ -279,12 +282,22 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
             <ul className="mods targets">
               {plan.targets.map((x, i) => (
                 <li key={i} className={'k-' + x.kind + (x.found ? '' : ' off')}>
+                  {x.goal && (
+                    <input type="checkbox" checked aria-label={t('craft.goalOff')} title={t('craft.goalOff')} disabled={busy}
+                      onChange={() => { const s = [...skipGoal, x.goal!]; setSkipGoal(s); build(ignoreIlvl, s) }} />
+                  )}
                   <span className={'tier' + genClass(x.gen === 'implicit' ? undefined : x.gen, x.tier) + (x.tier ? '' : ' none')}>{x.tier ?? '·'}</span>
                   <span className="mtext">{x.text}</span>
                   <span className="src muted">{x.source}</span>
                 </li>
               ))}
             </ul>
+            {skipGoal.length > 0 && (
+              <p className="muted small">
+                {t('craft.goalSkipped', { n: skipGoal.length })}{' '}
+                <button className="btn small-btn" disabled={busy} onClick={() => { setSkipGoal([]); build(ignoreIlvl, []) }}>{t('craft.goalRestore')}</button>
+              </p>
+            )}
           </div>
           {plan.warnings.filter((w) => !plan.missingPrices.some((m) => w.includes(m))).map((w, i) => <p key={i} className="note warn">{w}</p>)}
           {plan.missingPrices.length > 0 && (

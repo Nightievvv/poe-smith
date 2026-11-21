@@ -87,6 +87,7 @@ export function OppsView({ t, lang, settings, save, onOpen }: Props) {
           {t('opp.scanNow')}
         </button>
       </div>
+      <Discover t={t} />
       <p className="status small">
         {st?.scanning ? t('opp.scanning') + ' · ' : ''}
         {t('opp.progress', { n: scanned, total: st?.total ?? 0 })}
@@ -132,7 +133,6 @@ export function OppsView({ t, lang, settings, save, onOpen }: Props) {
       )}
       {!rows.length && <p className="placeholder">{t('opp.empty')}</p>}
       <p className="note">{t('opp.note')}</p>
-      <Discover t={t} />
     </div>
   )
 }
