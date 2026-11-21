@@ -33,6 +33,8 @@ export function defaultSettings(): Settings {
     // уведомления о выгодных крафтах — по желанию, по умолчанию выключены
     notify: false,
     notifyEveryMin: 60,
+    oppScan: false,
+    craftsPerDay: 4,
     window: {}
   }
 }

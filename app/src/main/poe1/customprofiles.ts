@@ -48,3 +48,8 @@ export function addFromPriceCheck(item: ParsedItem, filters: PcFilter[], name: s
 export function removeCustom(id: string) {
   write(listCustom().filter((p) => p.id !== id))
 }
+
+/** Добавить готовый профиль (например, найденное сочетание модов). */
+export function addCustomProfile(p: Profile) {
+  write([...listCustom(), p])
+}

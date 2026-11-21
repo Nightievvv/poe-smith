@@ -40,6 +40,10 @@ export interface Settings {
   favorites: FavoriteProfile[]
   notify: boolean
   notifyEveryMin: 60 | 120 | 240
+  /** «Возможности»: сканировать профили рынка в фоне (только при свободных лимитах трейда) */
+  oppScan: boolean
+  /** сколько предметов в день вы успеваете скрафтить — ограничивает «прибыль в день» */
+  craftsPerDay: number
   window: { x?: number; y?: number; width?: number; height?: number }
 }
 
@@ -124,6 +128,8 @@ export interface ProfileResult {
   craftItem?: ParsedItem
   /** свой профиль пользователя */
   custom?: boolean
+  /** оценка спроса: сколько лотов в день уходит с трейда (продано или снято), null — ещё нет второго замера */
+  sales?: number | null
   error?: string
 }
 
@@ -283,6 +289,8 @@ export interface CraftCost {
   attempts?: boolean
   /** расход только на промахи (Annulment, повторные крафты) — входит в цену «с промахами» */
   miss?: boolean
+  /** расчётное число попыток (для симуляции разброса стоимости) */
+  n?: number
 }
 
 /** Строка описания шага: обычное предложение или мод (префикс/суффикс), который выводится с отступом и цветом стороны. */
@@ -305,6 +313,8 @@ export interface CraftStep {
   costMiss?: [number, number]
   /** служебное: риск снять нужные моды, Chaos (входит в costMiss) */
   lossChaos?: number
+  /** ссылка (например, поиск на трейде для покупки заготовки) */
+  url?: string
 }
 
 export interface CraftTarget {
@@ -332,6 +342,9 @@ export interface CraftVariant {
   /** то же с учётом промахов (Annulment, повторная доводка снятых модов) */
   costMissMin: number
   costMissMax: number
+  /** симуляция всего плана (с промахами): медиана и «плохой расклад» — 9 из 10 крафтов дешевле */
+  costP50?: number
+  costP90?: number
   /** заметки к варианту (риски, допущения) */
   notes: string[]
   /** тот же вариант, но доводка подобрана для каждого мода по отдельности (основные поля — для всех модов сразу) */
@@ -417,6 +430,7 @@ export type OverlayEvent =
   | { type: 'openCraft'; item: ParsedItem }
   | { type: 'openTab'; tab: 'craft' | 'market' | 'currency' | 'regex' | 'journal' | 'settings' }
   | { type: 'stash'; data: StashShot | null }
+  | { type: 'opps'; data: OppState }
   | { type: 'update'; data: UpdateState }
 
 export interface Api {
@@ -469,6 +483,12 @@ export interface Api {
   exchangeIcons(ids?: string[]): Promise<Record<string, string>>
   /** оверлей склада: закрыть */
   stashClose(): void
+  /** «Возможности»: текущие строки и состояние сканера; scanNow — проверить несколько профилей сейчас */
+  oppState(): Promise<OppState>
+  oppScanNow(): Promise<void>
+  /** автопоиск выгодных сочетаний модов для слота (1 поиск + 4 выгрузки трейда) и сохранение сочетания профилем */
+  discoverCombos(slot: SlotId, minDiv: number): Promise<DiscoveredCombo[]>
+  saveCombo(combo: DiscoveredCombo, name: string): Promise<void>
   /** моды карт для генератора regex */
   mapMods(): Promise<MapModData>
   /** базы предметов и моды выбранной базы для генератора regex предметов */
@@ -476,6 +496,8 @@ export interface Api {
   itemMods(base: string): Promise<ItemModData | null>
   /** докрафт: моды предмета и моды, которые можно добавить */
   craftAddable(item: ParsedItem): Promise<AddableData | null>
+  /** «Заготовка + докрафт»: варианты с покупкой предмета, где уже есть часть нужных модов (тратит лимиты трейда) */
+  craftPrecraft(item: ParsedItem, targets: number[], lang: Lang): Promise<CraftVariant[]>
   /** обновления: проверка только сообщает о версии, скачивание и установка — по кнопке */
   updateState(): Promise<UpdateState>
   checkUpdate(): Promise<UpdateState>
@@ -586,4 +608,51 @@ export interface AddableData {
   groups: AddableGroup[]
   /** докрафт невозможен: осквернённый предмет */
   blocked: 'corrupted' | null
+}
+
+/** Строка вкладки «Возможности»: профиль рынка + лучший план крафта. Цены продажи — в Divine, стоимость крафта — в Chaos. */
+export interface OppRow {
+  key: string
+  slot: SlotId
+  id: string
+  name: I18nText
+  custom?: boolean
+  total: number
+  /** уходит лотов в день (оценка спроса), null — ещё нет второго замера */
+  sales: number | null
+  /** быстрая продажа (нижняя четверть свежих лотов) и медиана, Divine */
+  sellFast: number
+  median: number
+  /** Chaos за 1 Divine на момент скана */
+  divine: number
+  tradeUrl?: string
+  scannedAt: number
+  /** стоимость лучшего плана (симуляция с промахами): медиана и 90-й перцентиль, Chaos */
+  cost?: number
+  costP90?: number
+  variant?: string
+  mechanics?: string[]
+  craftItem?: ParsedItem
+  error?: string
+}
+
+export interface OppState {
+  rows: OppRow[]
+  /** всего профилей рынка */
+  total: number
+  /** ключ профиля, который сейчас сканируется */
+  scanning: string | null
+  league: string
+}
+
+/** Найденное сочетание модов среди дорогих лотов слота — кандидат в профиль рынка. */
+export interface DiscoveredCombo {
+  slot: SlotId
+  /** у скольких лотов из выборки есть это сочетание */
+  count: number
+  sample: number
+  /** медианная цена таких лотов, Divine */
+  medianDiv: number
+  /** моды: id стата трейда, шаблон текста, порог (нижняя четверть значений) */
+  stats: { id: string; label: string; min: number }[]
 }

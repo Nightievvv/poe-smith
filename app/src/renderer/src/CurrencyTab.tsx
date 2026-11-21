@@ -128,7 +128,8 @@ export function CurrencyTab({ t }: { t: T }) {
 }
 
 function PriceCell({ chaos, divine }: { chaos: number; divine: number }) {
-  if (divine > 0 && chaos >= divine) return <CurrencyAmount amount={fmtNum(chaos / divine)} id="divine" className="small" />
+  // дешевле 2 Divine (и сам Divine) — в Chaos
+  if (divine > 0 && chaos >= 2 * divine) return <CurrencyAmount amount={fmtNum(chaos / divine)} id="divine" className="small" />
   return <CurrencyAmount amount={fmtNum(chaos)} id="chaos" className="small" />
 }
 

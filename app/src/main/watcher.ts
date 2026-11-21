@@ -42,8 +42,9 @@ async function tick(deps: WatcherDeps) {
         deps.onLimits()
         const best = plan.variants[0]
         if (!best) continue
-        const value = r.median * r.divine
-        const cost = (best.costMin + best.costMax) / 2
+        // продажа — по цене быстрой продажи (нижняя четверть), крафт — медиана симуляции плана с промахами
+        const value = (r.q1 || r.median) * r.divine
+        const cost = best.costP50 ?? (best.costMissMin + best.costMissMax) / 2
         const margin = (value - cost) / value
         const last = lastNotified.get(f.profileId) ?? 0
         if (margin >= TARGET_MARGIN && Date.now() - last > QUIET_MS && Notification.isSupported()) {

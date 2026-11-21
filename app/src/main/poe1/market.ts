@@ -8,7 +8,7 @@ import { analyze, type PricePoint } from '../../shared/analyze'
 import { SLOT_CATEGORY, subtypeOf } from '../../shared/poe1/catalog'
 import { profilesFor, profileTargetMods, type Profile } from './profiles'
 import { buildQuery, type QuerySpec } from './query'
-import { search, fetchListings, tradeUrl, type Listing } from './trade'
+import { checkGone, search, fetchListings, tradeUrl, type Listing } from './trade'
 import { getRates, type Rates } from './ninja'
 
 /** Сколько свежих лотов выгружаем на профиль: 2 запроса fetch. Больше лимиты трейда не позволяют. */
@@ -23,6 +23,9 @@ interface Store {
   slots: Record<string, SlotMarket>
   /** league|profileId → история медиан */
   history: Record<string, { t: number; m: number }[]>
+  /** ликвидность: 10 свежих лотов прошлого замера и сглаженная оценка «уходит лотов в день» */
+  track?: Record<string, { ids: string[]; queryId: string; at: number; total: number }>
+  sales?: Record<string, number>
 }
 
 const VERSION = 4
@@ -84,7 +87,34 @@ export async function runQuery(league: string, spec: QuerySpec, settings: Settin
     examples.push(toExample(p, slot))
   }
   const { values, lo, hi, median, q1, q3, kept, cut, sellers, fresh } = stats
-  return { total: s.total, tradeUrl: tradeUrl(league, s.id), values, lo, hi, median, q1, q3, kept, cut, sellers, fresh, divine: rates.divine, examples }
+  return { total: s.total, tradeUrl: tradeUrl(league, s.id), values, lo, hi, median, q1, q3, kept, cut, sellers, fresh, divine: rates.divine, examples, ids: s.result.slice(0, 10), queryId: s.id }
+}
+
+/**
+ * Оценка спроса. Запоминаем 10 самых свежих лотов; при следующем скане (не раньше чем через 30 минут) проверяем,
+ * сколько из них исчезло. Доля исчезнувших в час × число лотов × 24 — «уходит лотов в день» (продажи + снятые лоты).
+ * Значение сглаживается между замерами.
+ */
+async function liquidity(hk: string, res: { ids: string[]; queryId: string; total: number }): Promise<number | null> {
+  store.track ??= {}
+  store.sales ??= {}
+  const prev = store.track[hk]
+  const now = Date.now()
+  if (prev && now - prev.at >= 30 * 60 * 1000 && prev.ids.length) {
+    try {
+      const { gone, checked } = await checkGone(prev.ids, prev.queryId)
+      const hours = (now - prev.at) / 3600000
+      if (checked) {
+        const perDay = Math.min(prev.total, ((gone / checked) / hours) * 24 * prev.total)
+        const old = store.sales[hk]
+        store.sales[hk] = old == null ? perDay : old * 0.6 + perDay * 0.4
+      }
+    } catch {
+      /* выгрузка не удалась — оценим в следующий раз */
+    }
+  }
+  if (!prev || now - prev.at >= 30 * 60 * 1000) store.track[hk] = { ids: res.ids, queryId: res.queryId, at: now, total: res.total }
+  return store.sales[hk] ?? null
 }
 
 function specFor(p: Profile, q: MarketQuery, minChaos: number): QuerySpec {
@@ -163,7 +193,9 @@ export async function scan(league: string, q: MarketQuery, more: boolean, settin
         const res = await runQuery(league, specFor(p, q, minChaos), settings, q.slot)
         const hk = `${league}|${p.id}|${minChaos}`
         const hist = (store.history[hk] ??= [])
-        r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, custom: p.custom, ...res, trend: trendFor(hist, res.median), craftItem: craftItemFor(p, q, res.examples, res.median) }
+        const sales = await liquidity(hk, res)
+        const { ids: _i, queryId: _q, ...rest } = res
+        r = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, custom: p.custom, ...rest, sales, trend: trendFor(hist, res.median), craftItem: craftItemFor(p, q, res.examples, res.median) }
         if (res.median) hist.push({ t: Date.now(), m: res.median })
         store.history[hk] = hist.slice(-200)
       } catch (e) {
@@ -196,7 +228,9 @@ export async function scanOne(league: string, q: MarketQuery, profileId: string,
   const res = await runQuery(league, specFor(p, q, minChaos), settings, q.slot)
   const hk = `${league}|${p.id}|${minChaos}`
   const hist = (store.history[hk] ??= [])
-  const r: ProfileResult = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, custom: p.custom, ...res, trend: trendFor(hist, res.median), craftItem: craftItemFor(p, q, res.examples, res.median) }
+  const sales = await liquidity(hk, res)
+  const { ids: _i, queryId: _q, ...rest } = res
+  const r: ProfileResult = { id: p.id, name: p.name, base: p.type, recipe: p.recipe, custom: p.custom, ...rest, sales, trend: trendFor(hist, res.median), craftItem: craftItemFor(p, q, res.examples, res.median) }
   if (res.median) hist.push({ t: Date.now(), m: res.median })
   store.history[hk] = hist.slice(-200)
   const k = key(league, q, minChaos)

@@ -5,7 +5,7 @@ import { loadSettings, writeSettings, hasSession, setSession, clearSession } fro
 import { fetchLeagues } from './leagues'
 import {
   HOTKEY_SCOPE, type HotkeyId, type HotkeyResult, type Lang, type MarketQuery, type OverlayEvent, type ParsedItem, type PcFilter,
-  type PriceCheckState, type Settings, type ValueEstimate, type JournalEntry, type CraftPlanOptions
+  type PriceCheckState, type Settings, type SlotId, type DiscoveredCombo, type ValueEstimate, type JournalEntry, type CraftPlanOptions
 } from '../shared/types'
 import { parseItem } from '../shared/poe1/item'
 import { copyItemText } from './poe1/copy'
@@ -27,7 +27,10 @@ import { exchangeData, exchangeIcons } from './poe1/exchange'
 import { mapMods } from './poe1/mapmods'
 import { itemBases, itemMods } from './poe1/itemmods'
 import { addableFor } from './poe1/addable'
+import { oppState, scanNow, startOpportunities, type OppDeps } from './opportunities'
 import { withBaseType } from './poe1/modinfo'
+import { precraftVariants } from './poe1/precraft'
+import { discoverCombos, saveCombo } from './poe1/discover'
 import { closeStash, debugStash, stashVisible, stashWindow, toggleStash } from './stash'
 import { checkForUpdates, downloadUpdate, initUpdater, installUpdate, updateState } from './updater'
 
@@ -306,9 +309,30 @@ ipcMain.handle('market:scan', async (_e, q: MarketQuery, more: boolean) => {
 ipcMain.handle('exchange:get', async (_e, force?: boolean) => exchangeData(await currentLeague(), !!force))
 ipcMain.handle('exchange:icons', async (_e, ids?: string[]) => exchangeIcons(await currentLeague(), ids))
 ipcMain.handle('maps:mods', () => mapMods())
+const oppDeps: OppDeps = { settings: () => settings, league: currentLeague, emit: (data) => send({ type: 'opps', data }), onLimits: () => sendLimits() }
+ipcMain.handle('opps:get', () => oppState())
+ipcMain.handle('opps:scan', () => scanNow(oppDeps))
+ipcMain.handle('opps:discover', async (_e, slot: SlotId, minDiv: number) => {
+  try {
+    return await discoverCombos(await currentLeague(), slot, minDiv)
+  } finally {
+    sendLimits()
+  }
+})
+ipcMain.handle('opps:saveCombo', (_e, combo: DiscoveredCombo, name: string) => {
+  saveCombo(combo, name)
+  send({ type: 'opps', data: oppState() })
+})
 ipcMain.handle('items:bases', () => itemBases())
 ipcMain.handle('items:mods', (_e, base: string) => itemMods(base))
 ipcMain.handle('craft:addable', (_e, item: ParsedItem) => addableFor(item))
+ipcMain.handle('craft:precraft', async (_e, item: ParsedItem, targets: number[], lang: Lang) => {
+  try {
+    return await precraftVariants(await currentLeague(), item, targets, lang, { customPrices: settings.customPrices })
+  } finally {
+    sendLimits()
+  }
+})
 ipcMain.on('stash:close', () => closeStash())
 if (process.env.POESMITH_DEBUG) ipcMain.handle('debug:stashLive', () => toggleStash({ load: rendererUrl, league: currentLeague, icon: appIcon() }))
 if (process.env.POESMITH_DEBUG) ipcMain.handle('debug:stash', (_e, path: string) => debugStash({ load: rendererUrl, league: currentLeague, icon: appIcon() }, path))
@@ -457,6 +481,7 @@ app.whenReady().then(() => {
   })
   initUpdater((s) => send({ type: 'update', data: s }))
   startWatcher(watcherDeps)
+  startOpportunities(oppDeps)
   registerHotkeys()
 })
 app.on('will-quit', () => globalShortcut.unregisterAll())

@@ -82,6 +82,27 @@ export async function fetchListings(ids: string[], queryId: string): Promise<Lis
   return out
 }
 
+/**
+ * Какие из ранее увиденных лотов ещё на трейде. Снятый (проданный или убранный) лот трейд возвращает как null.
+ * Одна выгрузка на 10 id.
+ */
+export async function checkGone(ids: string[], queryId: string): Promise<{ gone: number; checked: number }> {
+  let gone = 0
+  let checked = 0
+  for (let i = 0; i < ids.length; i += 10) {
+    const chunk = ids.slice(i, i + 10)
+    const res = await fetchLimiter.schedule(() =>
+      fetch(`${BASE}/fetch/${chunk.join(',')}?query=${encodeURIComponent(queryId)}`, { headers: headers() })
+    )
+    const j = await readJson(res)
+    const result = (j.result ?? []) as (Listing | null)[]
+    const alive = new Set(result.filter((x): x is Listing => !!x).map((x) => x.id))
+    gone += chunk.filter((id) => !alive.has(id)).length
+    checked += chunk.length
+  }
+  return { gone, checked }
+}
+
 export function tradeUrl(league: string, queryId: string) {
   return `https://www.pathofexile.com/trade/search/${encodeURIComponent(league)}/${queryId}`
 }

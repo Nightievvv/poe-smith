@@ -9,6 +9,7 @@ import { CraftTab } from './CraftTab'
 import { JournalTab } from './JournalTab'
 import { CurrencyTab } from './CurrencyTab'
 import { RegexTab } from './RegexTab'
+import { OppsView } from './OppsView'
 
 type Tab = 'craft' | 'market' | 'currency' | 'regex' | 'journal' | 'settings'
 const TABS: Tab[] = ['craft', 'market', 'currency', 'regex', 'journal', 'settings']
@@ -25,6 +26,8 @@ export function App() {
   const [limits, setLimits] = useState<Limits | null>(null)
   const [stepSignal, setStepSignal] = useState(0)
   const [update, setUpdate] = useState<UpdateState | null>(null)
+  // вкладка «Рынок»: профили по слоту или общая таблица «Возможности»
+  const [marketView, setMarketView] = useState<'profiles' | 'opps'>('profiles')
   const recording = useRef(false)
   const queryRef = useRef(query)
   queryRef.current = query
@@ -149,6 +152,18 @@ export function App() {
             customPrices={settings.customPrices} saveCustomPrices={(customPrices) => save({ customPrices })} />
         </div>
         {tab === 'market' && (
+          <div className="seg market-view" role="tablist">
+            {(['profiles', 'opps'] as const).map((v) => (
+              <button key={v} role="tab" aria-pressed={marketView === v} aria-selected={marketView === v} onClick={() => setMarketView(v)}>
+                {t(v === 'profiles' ? 'market.viewProfiles' : 'market.viewOpps')}
+              </button>
+            ))}
+          </div>
+        )}
+        {tab === 'market' && marketView === 'opps' && (
+          <OppsView t={t} lang={settings.lang} settings={settings} save={save} onOpen={openCraft} />
+        )}
+        {tab === 'market' && marketView === 'profiles' && (
           <MarketTab t={t} lang={settings.lang} query={query} setQuery={setQuery} market={market} divine={divine}
             onExample={(e: ExampleItem) => openCraft({ ...e, valueDiv: e.valueDiv ?? (e.priceDiv || undefined) })}
             onReload={() => window.api.getMarket(query).then((m) => { if (sameQuery(m)) setMarket(m) })}

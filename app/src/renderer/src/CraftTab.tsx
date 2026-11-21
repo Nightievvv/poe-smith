@@ -76,6 +76,9 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
   const [addable, setAddable] = useState<AddableData | null>(null)
   const [picks, setPicks] = useState<{ gid: string; tier: number }[]>([])
   const [addQ, setAddQ] = useState('')
+  // «Заготовка + докрафт»: поиск на трейде по кнопке (тратит лимиты)
+  const [preBusy, setPreBusy] = useState(false)
+  const [preMsg, setPreMsg] = useState<string | null>(null)
 
   useEffect(() => {
     window.api.craftDataStatus().then(setData)
@@ -91,6 +94,7 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
     setAddable(null)
     if (item) window.api.craftAddable(item).then(setAddable).catch(() => setAddable(null))
     setPlan(null)
+    setPreMsg(null)
     setIgnoreIlvl(false)
     setError(null)
     const v = item?.valueDiv ?? null
@@ -337,6 +341,9 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
                     {v.costMissMax > v.costMax * 1.01 && (
                       <span className="mono vmiss">{t('craft.withMisses')}: {range(v.costMissMin, v.costMissMax, plan.divine)}</span>
                     )}
+                    {v.costP90 != null && v.costP90 > 0 && (
+                      <span className="mono vmiss" title={t('craft.p90Hint')}>{t('craft.p90')}: {fmtCost(v.costP90, plan.divine)}</span>
+                    )}
                   </span>
                   {(() => {
                     const pr = profit(v)
@@ -367,6 +374,23 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
                 })
                 setJournalMsg(t('craft.journalAdded'))
               }}>{t('craft.toJournal')}</button>
+              {!finish && (
+                <button className="btn" disabled={preBusy} title={t('craft.precraftHint')} onClick={async () => {
+                  setPreBusy(true)
+                  setPreMsg(null)
+                  try {
+                    const idx = selected.map((s, i) => (s ? i : -1)).filter((i) => i >= 0)
+                    const vs = await window.api.craftPrecraft(item, idx, lang)
+                    if (vs.length) setPlan((p) => (p ? { ...p, variants: [...p.variants.filter((v) => !v.mechanics.includes('Trade')), ...vs] } : p))
+                    setPreMsg(vs.length ? t('craft.precraftFound', { n: vs.length }) : t('craft.precraftNone'))
+                  } catch (e) {
+                    setPreMsg(errText(t, e instanceof Error ? e.message : String(e)))
+                  } finally {
+                    setPreBusy(false)
+                  }
+                }}>{preBusy ? t('craft.precraftBusy') : t('craft.precraft')}</button>
+              )}
+              {preMsg && <span className="muted small">{preMsg}</span>}
               {journalMsg && <span className="muted small">{journalMsg}</span>}
             </div>
           )}
@@ -389,6 +413,7 @@ export function CraftTab({ t, lang, item, readFailed, readKey, onClose, stepSign
                     )}
                   </div>
                   <h4>{i + 1}. {s.title}</h4>
+                  {s.url && <a className="small" href={s.url} target="_blank" rel="noreferrer">{t('craft.openListing')}</a>}
                   {s.lines && s.lines.length > 0 && <Lines lines={s.lines} />}
                   <dl className="meta">
                     {s.currency.length > 0 && (

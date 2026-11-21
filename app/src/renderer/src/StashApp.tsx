@@ -127,7 +127,7 @@ export function StashApp() {
 /** Цена в Chaos → число и валюта: от 1 Divine — в Divine. */
 function amount(chaos: number, divine: number): { a: string; id: string } {
   const fmt = (n: number) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : n >= 10 ? String(Math.round(n)) : n >= 1 ? n.toFixed(1).replace(/\.0$/, '') : n >= 0.01 ? n.toFixed(2).replace(/0$/, '') : '<0.01')
-  if (divine > 0 && chaos >= divine) return { a: fmt(chaos / divine), id: 'divine' }
+  if (divine > 0 && chaos >= 2 * divine) return { a: fmt(chaos / divine), id: "divine" }
   return { a: fmt(chaos), id: 'chaos' }
 }
 

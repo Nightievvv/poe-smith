@@ -76,6 +76,8 @@ export interface PlanOptions {
   /** докрафт: targetIdx — оставляемые моды предмета, остальные явные моды снимаются; add — моды игры, которые нужно добавить */
   mode?: 'full' | 'finish'
   add?: string[]
+  /** докрафт: тексты модов, которые нужно добавить (мод игры подбирается по значению) */
+  addTexts?: string[]
 }
 
 /** «+42 to maximum Mana» → «+ to maximum Mana»: в шагах показываем тир, а не конкретное значение. */
@@ -105,10 +107,11 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
     return { name, count: label ?? `×${fmtN(count)}`, chaos: p != null ? p * count : undefined }
   }
   /** расход на попытки: зависит от удачи, для него считается диапазон 50–100% */
-  const costA = (name: string, count: number): CraftCost => ({ ...cost(name, count), count: `×${fmtN(count / 2)}–${fmtN(count)}`, attempts: true })
+  const costA = (name: string, count: number): CraftCost => ({ ...cost(name, count), count: `×${fmtN(count / 2)}–${fmtN(count)}`, attempts: true, n: count })
   const harvestCosts = (h: HarvestCost, times: number): CraftCost[] => [
-    ...h.parts.map((p) => costA(lifeforceName(p.lf), p.n * times)),
-    ...(h.rancour ? [costA('Crystallised Rancour', h.rancour * times)] : [])
+    // n — число попыток (крафтов), а не количество лайфорса
+    ...h.parts.map((p) => ({ ...costA(lifeforceName(p.lf), p.n * times), n: times })),
+    ...(h.rancour ? [{ ...costA('Crystallised Rancour', h.rancour * times), n: times }] : [])
   ]
   const harvestPrice = (h: HarvestCost) => h.parts.reduce((a, p) => a + price(lifeforceName(p.lf)) * p.n, 0) + (h.rancour ? price('Crystallised Rancour') * h.rancour : 0)
   const sum = (cs: CraftCost[]) => cs.reduce((a, c) => a + (c.chaos ?? 0), 0)
@@ -236,6 +239,12 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
         : { text, kind: 'explicit', gen: mod.gen as Side, mod, source: 'explicit', added: true })
     }
   }
+  if (finish)
+    for (const text of opts.addTexts ?? []) {
+      const cands = pool.filter((x) => fits(x, text)).sort((a, b) => b.reqLevel - a.reqLevel)
+      const mod = cands.find((x) => x.reqLevel <= ilvl) ?? cands[0]
+      if (mod) resolvedRaw.push({ text, kind: 'explicit', gen: mod.gen as Side, mod, source: 'explicit', added: true })
+    }
   // строки одного гибридного мода (например, «+354 to Armour» и «+352 to Evasion Rating») — это один мод, а не два
   const resolved: Resolved[] = []
   for (const r of resolvedRaw) {
@@ -1317,7 +1326,20 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
   const stepCosts = (s: CraftStep): CraftStep => {
     const x = split(noMiss(s.currency)), y = split(s.currency)
     const loss = s.lossChaos ?? 0
-    return { ...s, lines: cleanLines(s.lines), cost: [x.f + x.a / 2, x.f + x.a], costMiss: [y.f + (y.a + loss) / 2, y.f + y.a + loss] }
+    // контрольная точка: за 2.3 × N попыток шаг удаётся в 9 из 10 случаев; если это дороже готового предмета — стоп-лосс
+    const att = noMiss(s.currency).filter((c) => c.attempts && c.n)
+    const N = Math.max(0, ...att.map((c) => c.n!))
+    const extra: StepLine[] = []
+    if (N >= 3) {
+      const K = Math.ceil(2.3 * N)
+      extra.push(T(`Контрольная точка: за ~${K} попыток шаг удаётся в 9 из 10 случаев.`, `Checkpoint: ~${K} tries succeed 9 times out of 10.`))
+      const per = att.reduce((q, c) => q + (c.chaos ?? 0), 0) / N
+      const value = item.valueDiv && divine ? item.valueDiv * divine : null
+      if (value && per * K > value)
+        extra.push({ warn: T(`Стоп-лосс: если за ~${Math.max(1, Math.floor(value / per))} попыток не вышло, дальше выгоднее купить готовый предмет (~${fmtC(value)}).`,
+          `Stop-loss: if ~${Math.max(1, Math.floor(value / per))} tries fail, buying the finished item (~${fmtC(value)}) is cheaper.`) })
+    }
+    return { ...s, lines: [...(cleanLines(s.lines) ?? []), ...extra], cost: [x.f + x.a / 2, x.f + x.a], costMiss: [y.f + (y.a + loss) / 2, y.f + y.a + loss] }
   }
   const parts = (body: CraftStep[], weighted: { cs: CraftCost[]; k: number; extra?: number }[]) => {
     let a = 0, f = 0, ma = 0, mf = 0
@@ -1335,7 +1357,35 @@ export async function buildPlan(item: ParsedItem, targetIdx: number[], lang: Lan
       ma += x.a
       mf += x.f
     }
-    return { steps: [...head, ...body, ...tail].map(stepCosts), totalChaos: a + f, costMin: f + a / 2, costMax: a + f, costMissMin: mf + ma / 2, costMissMax: mf + ma }
+    const risk = simulateCost([...weighted, ...[...head, ...tail].map((s) => ({ cs: s.currency, k: 1 }))])
+    return { steps: [...head, ...body, ...tail].map(stepCosts), totalChaos: a + f, costMin: f + a / 2, costMax: a + f, costMissMin: mf + ma / 2, costMissMax: mf + ma, costP50: risk.p50, costP90: risk.p90 }
+  }
+  /**
+   * Разброс стоимости всего плана. Каждый шаг нужен с вероятностью k; число попыток шага — геометрическое
+   * со средним, как в расчёте (по самому «длинному» расходу шага); остальной расход шага и риск потерь масштабируются так же.
+   */
+  function simulateCost(entries: { cs: CraftCost[]; k: number; extra?: number }[], runs = 3000): { p50: number; p90: number } {
+    let seed = 12345
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff)
+    const prepared = entries.map((e) => {
+      const att = e.cs.filter((c) => c.attempts && c.n)
+      const N = Math.max(1, ...att.map((c) => c.n!))
+      return { k: e.k, N, a: att.reduce((x, c) => x + (c.chaos ?? 0), 0) + (e.extra ?? 0), f: e.cs.filter((c) => !c.attempts).reduce((x, c) => x + (c.chaos ?? 0), 0) }
+    })
+    const totals: number[] = []
+    for (let r = 0; r < runs; r++) {
+      let t = 0
+      for (const e of prepared) {
+        if (e.k < 1 && rnd() > e.k) continue
+        // геометрическое число попыток со средним N
+        const p = 1 / e.N
+        const g = p >= 1 ? 1 : Math.max(1, Math.ceil(Math.log(1 - rnd()) / Math.log(1 - p)))
+        t += e.f + (e.a * g) / e.N
+      }
+      totals.push(t)
+    }
+    totals.sort((x, y) => x - y)
+    return { p50: totals[Math.floor(runs * 0.5)], p90: totals[Math.floor(runs * 0.9)] }
   }
   const out: (CraftVariant & { key: string })[] = []
   const withTail = (m: Iterable<string>) => [...new Set([...m, ...tailMech])]
